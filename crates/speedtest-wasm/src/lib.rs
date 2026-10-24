@@ -125,6 +125,12 @@ pub fn samples_json() -> String {
     })
 }
 
+/// 取走最近一次致命错误的原因（页面在 failed=true 时显示，远程机器上开不了 devtools）。
+#[wasm_bindgen]
+pub fn last_error() -> String {
+    transport::take_last_error().unwrap_or_default()
+}
+
 #[wasm_bindgen]
 pub fn abort(now_ms: f64) {
     DRIVER.with(|d| {

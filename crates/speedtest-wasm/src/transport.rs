@@ -53,6 +53,26 @@ pub async fn sleep_ms(ms: i32) {
     let _ = JsFuture::from(promise).await;
 }
 
+/// 单条下载流最多重试多少次（累计，不是连续）。超过就认定这条流真的坏了。
+/// 浏览器连接池紧张时 fetch 会被直接拒绝，一条流的偶发报错不该让整轮报废——
+/// 10 路并发下实测 3 轮里有 2 轮因为一条流报错把 15 s 的窗口砍到 3 s。
+const MAX_STREAM_RETRIES: u32 = 20;
+
+thread_local! {
+    /// 最近一次致命错误的原因，供页面显示（远程机器上开不了 devtools）。
+    static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+fn note_error(msg: String) {
+    web_sys::console::error_1(&msg.clone().into());
+    LAST_ERROR.with(|e| *e.borrow_mut() = Some(msg));
+}
+
+/// 取走最近一次致命错误（wasm 入口导出）。
+pub fn take_last_error() -> Option<String> {
+    LAST_ERROR.with(|e| e.borrow_mut().take())
+}
+
 /// 观测累加器：被多个 fetch 任务共享，写入只做加法。
 #[derive(Clone, Default)]
 struct Meters {
@@ -118,6 +138,10 @@ impl WasmTransport {
                     sleep_ms(delay).await;
                 }
                 let signal = ctrl.signal();
+                // 单条流偶发失败（浏览器连接池紧张时 fetch 会被直接拒绝）不该让整轮报废：
+                // 10 路并发下实测 3 轮里有 2 轮因为一条流报错而提前结束，把 15 s 的窗口砍到 3 s。
+                // 重试几次；连续失败或已中止才算真失败。
+                let mut retries = 0u32;
                 while !signal.aborted() {
                     let opts = RequestInit::new();
                     opts.set_method("GET");
@@ -129,11 +153,18 @@ impl WasmTransport {
                     };
                     let resp_val = match JsFuture::from(global().fetch_with_request(&req)).await {
                         Ok(v) => v,
-                        Err(_) => {
-                            if !signal.aborted() {
-                                meters.failed.set(true);
+                        Err(err) => {
+                            if signal.aborted() {
+                                return;
                             }
-                            return;
+                            retries += 1;
+                            if retries > MAX_STREAM_RETRIES {
+                                note_error(format!("下载请求失败（已重试 {retries} 次）：{err:?}"));
+                                meters.failed.set(true);
+                                return;
+                            }
+                            sleep_ms(20).await;
+                            continue;
                         }
                     };
                     let Ok(resp) = resp_val.dyn_into::<Response>() else {
@@ -152,11 +183,20 @@ impl WasmTransport {
                         }
                         let chunk = match JsFuture::from(reader.read()).await {
                             Ok(v) => v,
-                            Err(_) => {
-                                if !signal.aborted() {
-                                    meters.failed.set(true);
+                            Err(err) => {
+                                if signal.aborted() {
+                                    return;
                                 }
-                                return;
+                                retries += 1;
+                                if retries > MAX_STREAM_RETRIES {
+                                    note_error(format!(
+                                        "下载读取失败（已重试 {retries} 次）：{err:?}"
+                                    ));
+                                    meters.failed.set(true);
+                                    return;
+                                }
+                                // 断流了就重开一条，别把整轮判死
+                                break;
                             }
                         };
                         let done = js_sys::Reflect::get(&chunk, &JsValue::from_str("done"))

@@ -81,7 +81,9 @@ worker.onmessage = (ev) => {
     const ul = f.upload_mbps_raw != null
       ? `${f.upload_mbps_raw.toFixed(2)}（实测）/ ${f.upload_mbps.toFixed(2)}（×1.06）` : '—';
     log(`完成：${(ms / 1000).toFixed(2)} s，${frames} 帧，phase=${f.phase}，failed=${f.failed}，` +
-        `ping=${f.ping} jitter=${f.jitter}，下载=${dl} 上传=${ul} Mbit/s，采样=${msg.samples.length}`);
+        `ping=${f.ping} jitter=${f.jitter}，下载=${dl} 上传=${ul} Mbit/s，采样=${msg.samples.length}` +
+        // failed 时把原因一起打出来（远程机器开不了 devtools）
+        (msg.error ? `\n失败原因：${msg.error}` : ''));
     // 给自动化脚本读的汇总
     document.title = `done ${f.download_mbps?.toFixed(2)} ${f.upload_mbps?.toFixed(2)} ${msg.samples.length}`;
     window.__result = {
@@ -92,6 +94,7 @@ worker.onmessage = (ev) => {
       ping: f.ping,
       jitter: f.jitter,
       failed: f.failed,
+      error: msg.error || null,
       samples: msg.samples.length,
       wall_ms: ms,
       frames,

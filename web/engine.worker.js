@@ -4,7 +4,7 @@
 // 挪到 Worker 是 7.23 Gbit/s（PLAN §0.5）。主线程还要渲染仪表盘，
 // 让它去搬字节是双重浪费。
 
-import init, { start, tick, abort, samples_json } from './pkg/speedtest_wasm.js';
+import init, { start, tick, abort, samples_json, last_error } from './pkg/speedtest_wasm.js';
 
 let running = false;
 let timer = null;
@@ -82,6 +82,8 @@ self.onmessage = async (ev) => {
               type: 'done',
               frame,
               samples: JSON.parse(samples_json()),
+              // failed 时带上原因：远程机器上没法开 devtools 看 console
+              error: frame.failed ? last_error() || '（未捕获到具体原因）' : null,
             });
             return;
           }
