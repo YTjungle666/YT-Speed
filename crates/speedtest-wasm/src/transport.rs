@@ -61,6 +61,9 @@ pub struct WasmTransport {
     ws_token: Rc<RefCell<Option<String>>>,
     /// 本轮是否已经下发过 StopAll（避免重复关闭）。
     stopped: bool,
+    /// 收尾标记：`stop_all` 关连接时置位。发送循环看到它就明白
+    /// “send 失败是正常收尾”，不能记成传输失败——否则每轮结束都报 failed。
+    stopping: Rc<Cell<bool>>,
 }
 
 impl WasmTransport {
@@ -72,6 +75,7 @@ impl WasmTransport {
             ws: None,
             ws_token: Rc::new(RefCell::new(None)),
             stopped: false,
+            stopping: Rc::new(Cell::new(false)),
         }
     }
 
@@ -192,13 +196,19 @@ impl WasmTransport {
         // WebSocket 是 JS 对象的句柄，Clone 只是复制引用，可以安全地搬进闭包。
         // 注意：闭包里必须先 clone 再 move 进 async 块，否则闭包会退化成 FnOnce。
         let ws_send = ws.clone();
+        let stopping = self.stopping.clone();
         let onopen = Closure::<dyn FnMut()>::new(move || {
             let ws = ws_send.clone();
             let meters = meters.clone();
+            let stopping = stopping.clone();
             let frame = vec![0xA5u8; UPLOAD_FRAME_BYTES];
             spawn_local(async move {
                 loop {
                     if ws.ready_state() != WebSocket::OPEN {
+                        // 收尾时服务端先关也算正常，不记失败
+                        if !stopping.get() {
+                            meters.failed.set(true);
+                        }
                         break;
                     }
                     if ws.buffered_amount() > UPLOAD_HIGH_WATER {
@@ -206,7 +216,9 @@ impl WasmTransport {
                         continue;
                     }
                     if ws.send_with_u8_array(&frame).is_err() {
-                        meters.failed.set(true);
+                        if !stopping.get() {
+                            meters.failed.set(true);
+                        }
                         break;
                     }
                     meters.bytes.set(meters.bytes.get() + frame.len() as u64);
@@ -222,6 +234,7 @@ impl WasmTransport {
 impl Transport for WasmTransport {
     fn start_streams(&mut self, dir: Dir, count: u32, stagger_ms: f64) {
         self.stopped = false;
+        self.stopping.set(false);
         match dir {
             Dir::Down => self.start_download(count, stagger_ms),
             Dir::Up => self.start_upload(),
@@ -233,6 +246,7 @@ impl Transport for WasmTransport {
             return;
         }
         self.stopped = true;
+        self.stopping.set(true);
         for c in self.controllers.drain(..) {
             c.abort();
         }

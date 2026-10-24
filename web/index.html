@@ -67,7 +67,10 @@ worker.onmessage = (ev) => {
     $('ulres').textContent = f.upload_mbps != null ? f.upload_mbps.toFixed(2) + ' Mbit/s' : '—';
     $('npts').textContent = msg.samples.length + ' 点';
     $('phase').textContent = f.phase;
-    log(`完成：${(ms / 1000).toFixed(2)} s，${frames} 帧，phase=${f.phase}，failed=${f.failed}`);
+    const dl = f.download_mbps != null ? f.download_mbps.toFixed(2) : '—';
+    const ul = f.upload_mbps != null ? f.upload_mbps.toFixed(2) : '—';
+    log(`完成：${(ms / 1000).toFixed(2)} s，${frames} 帧，phase=${f.phase}，failed=${f.failed}，` +
+        `ping=${f.ping} jitter=${f.jitter}，下载=${dl} 上传=${ul}（Mbit/s），采样=${msg.samples.length}`);
     // 给自动化脚本读的汇总
     document.title = `done ${f.download_mbps?.toFixed(2)} ${f.upload_mbps?.toFixed(2)} ${msg.samples.length}`;
     window.__result = {
