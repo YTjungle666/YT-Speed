@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sent = 0u64;
     let started = Instant::now();
     while sent < total_bytes {
-        ws.send(Message::Binary(frame.clone().into())).await?;
+        ws.send(Message::Binary(frame.clone())).await?;
         sent += frame.len() as u64;
     }
     ws.close(None).await.ok();
