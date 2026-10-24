@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>并发路数扫描</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; color: #222; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.hint { color: #666; margin: 0 0 16px; }
+  button { font: inherit; padding: 6px 14px; }
+  table { border-collapse: collapse; margin-top: 16px; }
+  th, td { border: 1px solid #ddd; padding: 4px 10px; text-align: right; font-variant-numeric: tabular-nums; }
+  th { background: #f5f5f5; }
+  #stage { margin-left: 12px; color: #555; }
+  #out { margin-top: 16px; font-family: ui-monospace, monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>下载并发路数扫描（新引擎）</h1>
+<p class="hint">
+  只测下载，每档 2 轮、每轮 8 s，服务端不要限速（10 Gbit/s 环境才有意义）。
+  目的：确认 8 路是不是最优，还是更多/更少路数能吃满接收端窗口。
+</p>
+<button id="go">开始扫描</button><span id="stage"></span>
+<div id="out"></div>
+
+<script type="module">
+const COUNTS = [4, 6, 8, 10, 12];
+const ROUNDS = 2;
+const SECS = 8;
+
+const worker = new Worker('./engine.worker.js', { type: 'module' });
+let pending = null, warmed = false, warmResolve = null;
+const warm = new Promise((res) => { warmResolve = res; });
+
+worker.onmessage = (ev) => {
+  const msg = ev.data;
+  if (msg.type === 'init-done') { warmed = true; warmResolve('ok'); return; }
+  if (msg.type === 'error') {
+    document.getElementById('stage').textContent = 'worker 报错：' + msg.where + ' — ' + msg.message;
+    if (!warmed) warmResolve('fail');
+    if (pending) { const done = pending; pending = null; done(null); }
+    return;
+  }
+  if (msg.type === 'done' && pending) {
+    const done = pending; pending = null;
+    const f = msg.frame;
+    done({ dl: f.download_mbps_raw, up: f.upload_mbps_raw, failed: f.failed });
+  }
+};
+worker.postMessage({ cmd: 'init' });
+
+function runOne(plan, timeoutMs = 60000) {
+  return new Promise((resolve) => {
+    pending = resolve;
+    worker.postMessage({ cmd: 'start', base: location.origin, plan });
+    setTimeout(() => { if (pending === resolve) { pending = null; resolve(null); } }, timeoutMs);
+  });
+}
+
+const med = (a) => {
+  const v = a.filter((x) => typeof x === 'number' && isFinite(x)).sort((x, y) => x - y);
+  if (!v.length) return null;
+  return v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+};
+
+document.getElementById('go').onclick = async () => {
+  const btn = document.getElementById('go');
+  btn.disabled = true;
+  const stage = document.getElementById('stage');
+  stage.textContent = '预热 wasm...';
+  if (await warm !== 'ok') { stage.textContent = 'wasm 预热失败'; btn.disabled = false; return; }
+
+  const rows = [];
+  for (const n of COUNTS) {
+    const vals = [];
+    for (let r = 1; r <= ROUNDS; r++) {
+      stage.textContent = `${n} 路：第 ${r}/${ROUNDS} 轮...`;
+      const res = await runOne({ ping: false, download: true, upload: false, streams: n, dl_seconds: SECS });
+      if (res && typeof res.dl === 'number') vals.push(res.dl);
+    }
+    rows.push({ n, vals, m: med(vals) });
+    render(rows);
+  }
+  stage.textContent = '扫描完成';
+  btn.disabled = false;
+  render(rows, true);
+};
+
+function render(rows, done = false) {
+  const best = rows.filter((r) => r.m).sort((a, b) => b.m - a.m)[0];
+  let html = '<table><tr><th>并发路数</th><th>各轮实测（Mbit/s）</th><th>中位</th><th>相对最优</th></tr>';
+  for (const r of rows) {
+    const rel = best && r.m ? ((r.m / best.m - 1) * 100).toFixed(2) + '%' : '';
+    html += `<tr><td>${r.n}</td><td>${r.vals.map((v) => v.toFixed(0)).join(' / ')}</td>` +
+            `<td>${r.m ? r.m.toFixed(1) : '—'}</td><td>${rel}</td></tr>`;
+  }
+  html += '</table>';
+  if (done && best) {
+    html += `\n最佳：${best.n} 路，中位 ${best.m.toFixed(1)} Mbit/s（实测，未乘 1.06）`;
+  }
+  document.getElementById('out').innerHTML = html;
+  // 方便复制一行汇总
+  if (done) {
+    const line = '扫描结果：' + rows.map((r) => `${r.n}路 ${r.m ? r.m.toFixed(0) : '—'}`).join('，') +
+                 `｜最佳 ${best.n} 路 ${best.m.toFixed(1)}`;
+    console.log(line);
+    document.getElementById('out').textContent += '\n\n' + line;
+  }
+}
+
+if (new URLSearchParams(location.search).get('auto') === '1') document.getElementById('go').click();
+</script>
+</body>
+</html>
