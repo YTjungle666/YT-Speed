@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/speedtest-core", "crates/speedtest-server", "crates/speedtest-transport", "crates/speedtest-wasm"]
+members = ["crates/speedtest-core", "crates/speedtest-server", "crates/speedtest-transport", "crates/speedtest-wasm", "crates/speedtest-ui"]
 resolver = "2"
 
 [workspace.package]

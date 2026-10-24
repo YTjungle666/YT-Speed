@@ -1,0 +1,30 @@
+[package]
+name = "speedtest-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Leptos 前端：仪表盘 / 曲线 / 结果面板 / 设置页（纯 CSR，测量逻辑全在 speedtest-wasm）"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+leptos = { version = "0.7", features = ["csr"] }
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+web-sys = { version = "0.3", features = [
+  "Window", "Document", "Element", "HtmlElement", "HtmlInputElement",
+  "Storage", "Location", "Worker", "WorkerOptions", "WorkerType", "MessageEvent", "ErrorEvent", "console",
+] }
+
+[[bin]]
+name = "speedtest-ui"
+path = "src/main.rs"
+
+# 只为 wasm 构建：trunk 会指定 target
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"

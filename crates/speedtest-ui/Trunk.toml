@@ -1,0 +1,9 @@
+[build]
+target = "index.html"
+dist = "dist"
+# 产物部署到 web/app/ 下，所以资源要用 /app/ 前缀（trunk 默认 "/" 会让 JS 404）
+public_url = "/app/"
+
+[serve]
+port = 8091
+open = false
