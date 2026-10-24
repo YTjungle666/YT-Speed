@@ -290,6 +290,26 @@ P0 的 TCP_INFO 已经指到 `rwnd_limited≈45%`、`sndbuf_limited=0`、重传 
 页面一片空白且控制台没有一行错误；worker 必须 `{type:'module'}`，普通 worker 直接
 `Cannot use import statement outside a module`，同样表现为「点了没反应」。
 
+## P4b UI 收尾（2026-10-24）
+
+| 项 | 结果 |
+|---|---|
+| 历史上限 | localStorage 25 条读入 → 回写 20 条，UI 显示 20 条 |
+| 一次真实测试 | 下载 27,353.60 / 上传 13,559.79 Mbit/s，ping 1.00 ms，jitter 0.64 ms，108 点 |
+| 上传开关关闭 | 真跳过上传阶段（结果区上传为 —），plan 落盘 `upload:false` |
+| 复制 | 无权限环境下降级为只读文本框（Chromium headless 拒绝 clipboard） |
+| 移动 390×844 | `scrollWidth == 390`，卡片顺序 下载 → 上传 → 延迟，曲线 332 px 铺满容器 |
+| wasm | 350,972 B（brotli `-q 11` = 115,006 B），比 P4a 的 1,266,169 B 小很多 |
+| 控制台 | 0 错误 |
+
+体积那 3.6 倍差距来自 `opt-level=s` + `LTO=fat` + `codegen-units=1` + `wasm-opt -Oz`，
+不是功能减少：同一套组件构建前后都跑通了完整测速。
+
+复核时改掉一处：`Date::to_iso_string()` 是 UTC，历史列表会显示比本地时间早 8 小时，
+改用本地分量拼 `YYYY-MM-DD HH:MM:SS`。
+
+浏览器矩阵：Chromium 156 通过；Firefox / WebKit 本机没装，README 标为「未验证」。
+
 ## 复现方式
 
 ```sh
