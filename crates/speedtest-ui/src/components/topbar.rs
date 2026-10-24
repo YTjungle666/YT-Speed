@@ -28,19 +28,23 @@ pub fn TopBar(
                 "speedtest-rs"
                 <span class="ver">"v0.1.0"</span>
             </div>
-            <nav class="tabs">
+            <nav class="tabs" aria-label="页面导航">
                 <button
+                    type="button"
                     class=move || if route.get() == Route::Measure { "tab on" } else { "tab" }
                     on:click=move |_| set_route.set(Route::Measure)
                 >"测量"</button>
                 <button
+                    type="button"
                     class=move || if route.get() == Route::Settings { "tab on" } else { "tab" }
                     on:click=move |_| set_route.set(Route::Settings)
                 >"设置"</button>
             </nav>
             <button
+                type="button"
                 class=move || if running.get() { "primary danger" } else { "primary" }
                 disabled=move || !session.is_ready() && !running.get()
+                aria-label=move || if running.get() { "中止测速" } else { "开始测速" }
                 on:click=move |_| {
                     if running.get_untracked() {
                         session.abort();

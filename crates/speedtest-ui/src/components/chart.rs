@@ -4,12 +4,14 @@
 
 use leptos::prelude::*;
 
+use crate::components::format::{phase_color_class, phase_label};
+
 const W: f64 = 600.0;
 const H: f64 = 160.0;
 const PAD: f64 = 8.0;
 
 #[component]
-pub fn Chart(samples: RwSignal<Vec<[f64; 2]>>) -> impl IntoView {
+pub fn Chart(samples: RwSignal<Vec<[f64; 2]>>, phase: RwSignal<String>) -> impl IntoView {
     let max_y = move || samples.get().iter().map(|p| p[1]).fold(100.0f64, f64::max) * 1.15;
 
     let points = move || {
@@ -30,16 +32,23 @@ pub fn Chart(samples: RwSignal<Vec<[f64; 2]>>) -> impl IntoView {
     };
 
     let count = move || samples.get().len();
+    let class = move || format!("chart {}", phase_color_class(&phase.get()));
+    let label = move || format!("{}速率曲线", phase_label(&phase.get()));
 
     view! {
-        <figure class="chart">
+        <figure class=class>
             <figcaption>
                 "速率曲线"
                 <span class="muted">{move || format!("{} 点", count())}</span>
             </figcaption>
-            <svg viewBox=format!("0 0 {W} {H}") preserveAspectRatio="none">
+            <svg
+                viewBox=format!("0 0 {W} {H}")
+                preserveAspectRatio="none"
+                role="img"
+                aria-label=label
+            >
                 <line x1=PAD y1=H - PAD x2=W - PAD y2=H - PAD class="axis" />
-                <polyline points=points class="curve" />
+                <polyline points=points class="curve" vector-effect="non-scaling-stroke" />
             </svg>
         </figure>
     }

@@ -13,7 +13,7 @@
 mod components;
 mod engine;
 
-use components::{Chart, Gauge, ResultPanel, Settings, TopBar};
+use components::{Chart, Gauge, History, ResultPanel, Settings, TopBar};
 use leptos::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,7 +42,8 @@ pub fn App() -> impl IntoView {
                         peak=10_000.0
                     />
                     <ResultPanel session=session />
-                    <Chart samples=session.samples />
+                    <History session=session />
+                    <Chart samples=session.samples phase=session.phase />
                 </section>
             </Show>
         </main>

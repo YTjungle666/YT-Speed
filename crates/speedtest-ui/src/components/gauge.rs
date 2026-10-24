@@ -5,6 +5,8 @@
 
 use leptos::prelude::*;
 
+use crate::components::format::{phase_color_class, phase_label};
+
 const R: f64 = 96.0;
 const CX: f64 = 120.0;
 const CY: f64 = 116.0;
@@ -33,6 +35,7 @@ pub fn Gauge(value: RwSignal<f64>, phase: RwSignal<String>, peak: f64) -> impl I
         (x, y)
     };
     let track = arc_path(-SPAN / 2.0, SPAN / 2.0);
+    let class = move || format!("gauge {}", phase_color_class(&phase.get()));
     let ticks = move || {
         (0..=10)
             .map(|i| {
@@ -55,8 +58,8 @@ pub fn Gauge(value: RwSignal<f64>, phase: RwSignal<String>, peak: f64) -> impl I
     };
 
     view! {
-        <div class="gauge">
-            <svg viewBox="0 0 240 200" role="img" aria-label="当前速率">
+        <div class=class>
+            <svg viewBox="0 0 240 200" aria-hidden="true">
                 <path d=track class="track" />
                 <path d=move || arc_path(-SPAN / 2.0, -SPAN / 2.0 + frac() * SPAN) class="fill" />
                 {ticks}
@@ -68,23 +71,11 @@ pub fn Gauge(value: RwSignal<f64>, phase: RwSignal<String>, peak: f64) -> impl I
                 />
                 <circle cx=CX cy=CY r="5" class="hub" />
             </svg>
-            <div class="gauge-read">
+            <div class="gauge-read" aria-live="polite" aria-atomic="true">
                 <span class="num">{move || format!("{:.2}", value.get())}</span>
                 <span class="unit">"Mbit/s"</span>
                 <span class="phase">{move || phase_label(&phase.get())}</span>
             </div>
         </div>
-    }
-}
-
-fn phase_label(p: &str) -> &'static str {
-    match p {
-        "Idle" => "待机",
-        "Ping" => "延迟",
-        "Download" => "下载",
-        "Upload" => "上传",
-        "Done" => "完成",
-        "Aborted" => "已中止",
-        _ => "—",
     }
 }

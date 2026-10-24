@@ -39,3 +39,27 @@ core 的时间一律由调用方传入（`apply(ev, now_ms)`），所以测试�
 换算照抄上游 `speedtest_worker.js`（v6.3.1）：
 `speed = bytes / secs`、`mbps = speed * 8 * 1.06 / (use_mebibits ? 1048576 : 1000000)`、
 下载 grace 1.5 s、上传 grace 3 s、`time_auto` 时每 tick `bonus += min(5*speed/100000, 400)`。
+
+## Web UI
+
+构建并部署 Leptos 页面到 `web/app/`：
+
+```sh
+sudo apt install binaryen   # 提供 wasm-opt，仅构建时需要
+./scripts/build-ui.sh
+```
+
+在仓库根目录启动静态服务后打开 `http://127.0.0.1:8092/app/`：
+
+```sh
+cd web
+python3 -m http.server 8092
+```
+
+构建使用 `/app/` 作为 Trunk `public_url`。P4b 浏览器矩阵：
+
+| 浏览器 | 状态 |
+|---|---|
+| Chromium 156 | 通过：桌面与 390×844 渲染、无横向溢出、设置输入、阶段配色、历史 25→20 截断、复制成功/降级、无控制台错误 |
+| Firefox | 未验证：本机未安装 Firefox |
+| WebKit | 未验证 |
