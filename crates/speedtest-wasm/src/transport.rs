@@ -283,7 +283,7 @@ impl WasmTransport {
     /// “send 返回、且已离开浏览器队列”计——数字会略高于服务端，页面会显式标注 XHR。
     fn start_xhr(&mut self, streams: u32, stagger_ms: f64) {
         self.mode.set(UploadMode::Xhr);
-        let count = streams.max(1).min(16);
+        let count = streams.clamp(1, 16);
         for i in 0..count {
             let delay = (stagger_ms * i as f64) as i32;
             let url = format!("{}/backend/empty", self.base);
