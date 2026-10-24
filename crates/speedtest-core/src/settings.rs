@@ -39,7 +39,10 @@ impl Default for Settings {
             time_auto: true,
             ping_count: 10,
             conv: Conv::default(),
-            dl_streams: 8,
+            // 实测 6 路 > 8 路：交错扫描（同一轮里 6/8/10/12 各跑一遍，抵消机器冷热）
+            // 十万兆客户端 6 路 7525 / 8 路 7170 Mbit/s，本机回环 6 路 28264 / 8 路 27532。
+            // 更多路数反而更慢（10 路 7350、12 路 6681），因为浏览器每路都要独立调度。
+            dl_streams: 6,
             ul_streams: 1,
             stream_stagger_ms: 300.0,
         }

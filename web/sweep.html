@@ -18,16 +18,18 @@
 <body>
 <h1>下载并发路数扫描（新引擎）</h1>
 <p class="hint">
-  只测下载，每档 2 轮、每轮 8 s，服务端不要限速（10 Gbit/s 环境才有意义）。
+  只测下载，各档**交错**跑 <code>?rounds=</code> 轮、每轮 <code>?secs=</code> 秒，
+  服务端不要限速（10 Gbit/s 环境才有意义）。默认 4/6/8/10/12 路，可用 <code>?counts=6,8</code> 指定。
   目的：确认 8 路是不是最优，还是更多/更少路数能吃满接收端窗口。
 </p>
 <button id="go">开始扫描</button><span id="stage"></span>
 <div id="out"></div>
 
 <script type="module">
-const COUNTS = [4, 6, 8, 10, 12];
-const ROUNDS = 2;
-const SECS = 8;
+const Q = new URLSearchParams(location.search);
+const COUNTS = (Q.get('counts') || '4,6,8,10,12').split(',').map(Number).filter((n) => n > 0);
+const ROUNDS = Number(Q.get('rounds') || 2);
+const SECS = Number(Q.get('secs') || 8);
 
 const worker = new Worker('./engine.worker.js', { type: 'module' });
 let pending = null, warmed = false, warmResolve = null;
@@ -71,17 +73,18 @@ document.getElementById('go').onclick = async () => {
   stage.textContent = '预热 wasm...';
   if (await warm !== 'ok') { stage.textContent = 'wasm 预热失败'; btn.disabled = false; return; }
 
-  const rows = [];
-  for (const n of COUNTS) {
-    const vals = [];
-    for (let r = 1; r <= ROUNDS; r++) {
-      stage.textContent = `${n} 路：第 ${r}/${ROUNDS} 轮...`;
+  // 交错跑：同一轮里把各档都跑一遍，再进下一轮。
+  // 顺序跑会让“越到后面机器越热/越稳”变成路数差异（实测同一台机器前后能差 5%）。
+  const acc = new Map(COUNTS.map((n) => [n, []]));
+  for (let r = 1; r <= ROUNDS; r++) {
+    for (const n of COUNTS) {
+      stage.textContent = `第 ${r}/${ROUNDS} 轮 · ${n} 路...`;
       const res = await runOne({ ping: false, download: true, upload: false, streams: n, dl_seconds: SECS });
-      if (res && typeof res.dl === 'number') vals.push(res.dl);
+      if (res && typeof res.dl === 'number') acc.get(n).push(res.dl);
+      render(COUNTS.map((k) => ({ n: k, vals: acc.get(k), m: med(acc.get(k)) })));
     }
-    rows.push({ n, vals, m: med(vals) });
-    render(rows);
   }
+  const rows = COUNTS.map((n) => ({ n, vals: acc.get(n), m: med(acc.get(n)) }));
   stage.textContent = '扫描完成';
   btn.disabled = false;
   render(rows, true);
