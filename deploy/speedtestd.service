@@ -1,0 +1,44 @@
+[Unit]
+Description=speedtestd（LibreSpeed Rust 服务端）
+Documentation=https://github.com/YTjungle666/YT-Speed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=speedtest
+Group=speedtest
+WorkingDirectory=/srv/speedtest
+ExecStart=/usr/local/bin/speedtestd --listen 0.0.0.0:8080 --web-dir /srv/speedtest/web
+# 可调项也可以走环境变量（与命令行同义）；改完 systemctl daemon-reload
+Environment=RUST_LOG=info
+# Environment=SPEEDTEST_MAX_DOWNLOAD_MBPS=500
+# Environment=SPEEDTEST_MAX_UPLOAD_MBPS=0
+Restart=on-failure
+RestartSec=2s
+# 优雅退出：收到 TERM 后停止接收新连接
+KillSignal=SIGTERM
+TimeoutStopSec=10s
+
+# 加固：服务只需要监听端口和读静态文件
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadOnlyPaths=/srv/speedtest
+
+# 10GbE 下文件句柄和连接数都够用
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

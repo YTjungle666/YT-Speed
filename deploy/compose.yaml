@@ -1,0 +1,25 @@
+services:
+  speedtestd:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: speedtestd:0.1.0
+    container_name: speedtestd
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      RUST_LOG: info
+      # 限速留空 = 不限；要“温和模式”就设 500
+      SPEEDTEST_MAX_DOWNLOAD_MBPS: "0"
+      SPEEDTEST_MAX_UPLOAD_MBPS: "0"
+    # 10GbE 压测时容器需要足够的文件句柄
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

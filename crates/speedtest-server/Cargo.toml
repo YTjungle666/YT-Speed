@@ -1,0 +1,27 @@
+[package]
+name = "speedtest-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "LibreSpeed 服务端：garbage/empty/getIP、WebSocket 上传结算、限速"
+
+[[bin]]
+name = "speedtestd"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+bytes.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures-util.workspace = true
+http-body-util.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+tokio-tungstenite = "0.24"
