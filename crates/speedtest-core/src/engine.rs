@@ -47,8 +47,12 @@ pub enum Dir {
 pub enum Command {
     /// 发一次 ping 请求（`seq` 从 0 起，回包时带回来）。
     Ping { seq: u32 },
-    /// 开传输流；`count` 是并发数。
-    StartStreams { dir: Dir, count: u32 },
+    /// 开传输流；`count` 是并发数，第 i 条流延迟 `i * stagger_ms` 起跑。
+    StartStreams {
+        dir: Dir,
+        count: u32,
+        stagger_ms: f64,
+    },
     /// 停止所有流（含 abort、阶段切换、测试结束）。
     StopAll,
 }
@@ -228,6 +232,7 @@ impl Engine {
                 cmds.push(Command::StartStreams {
                     dir: Dir::Down,
                     count: self.settings.dl_streams,
+                    stagger_ms: self.settings.stream_stagger_ms,
                 });
             }
             Phase::Idle | Phase::Ping | Phase::Download if self.plan.upload => {
@@ -237,6 +242,7 @@ impl Engine {
                 cmds.push(Command::StartStreams {
                     dir: Dir::Up,
                     count: self.settings.ul_streams,
+                    stagger_ms: self.settings.stream_stagger_ms,
                 });
             }
             _ => {
@@ -335,6 +341,7 @@ impl Engine {
                 cmds.push(Command::StartStreams {
                     dir,
                     count: self.settings.ul_streams,
+                    stagger_ms: self.settings.stream_stagger_ms,
                 });
             }
             None => {

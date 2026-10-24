@@ -303,7 +303,8 @@ fn start_is_idempotent_and_stopall_on_finish() {
         first,
         vec![Command::StartStreams {
             dir: Dir::Down,
-            count: 8
+            count: 8,
+            stagger_ms: 300.0
         }]
     );
     assert!(e.apply(Event::Start, 0.0).is_empty(), "重复 Start 应被忽略");

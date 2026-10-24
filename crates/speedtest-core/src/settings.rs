@@ -23,6 +23,10 @@ pub struct Settings {
     pub dl_streams: u32,
     /// 上传并发：WebSocket 单连接即线速，1 路足够。
     pub ul_streams: u32,
+    /// 并发流的错开启动间隔（毫秒）。上游 `xhr_multistreamDelay = 300`：
+    /// 所有流不要同时起跑，否则会一起撞上慢启动、也一起结束留下空档。
+    /// 由传输层实现，引擎只把它随命令下发。
+    pub stream_stagger_ms: f64,
 }
 
 impl Default for Settings {
@@ -37,6 +41,7 @@ impl Default for Settings {
             conv: Conv::default(),
             dl_streams: 8,
             ul_streams: 1,
+            stream_stagger_ms: 300.0,
         }
     }
 }
