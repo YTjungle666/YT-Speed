@@ -40,5 +40,10 @@ ReadOnlyPaths=/srv/speedtest
 # 10GbE 下文件句柄和连接数都够用
 LimitNOFILE=65535
 
+# 日志不许把磁盘写满：服务只在阶段结束打一行 INFO，正常情况下每分钟不到 1 条；
+# 这里限死突发速率，即便有人狂刷请求，journald 也只会丢日志、不会涨盘。
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
+
 [Install]
 WantedBy=multi-user.target

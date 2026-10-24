@@ -1,0 +1,13 @@
+[package]
+name = "speedtest-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "把 core 的命令/事件接到具体传输（wasm: fetch/WebSocket；native: 测试与 CLI）"
+
+[dependencies]
+speedtest-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
