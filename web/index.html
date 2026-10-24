@@ -1,0 +1,117 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>speedtest-rs · P3 引擎验证</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 28px; background: #0d1117; color: #e6edf3; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.hint { color: #8b949e; margin: 0 0 20px; font-size: 13px; }
+  button { font: inherit; padding: 7px 16px; margin-right: 8px; border-radius: 7px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
+  button:hover { background: #30363d; }
+  button:disabled { opacity: .45; cursor: default; }
+  #out { margin-top: 22px; font-variant-numeric: tabular-nums; }
+  .row { display: grid; grid-template-columns: 190px 1fr; padding: 3px 0; }
+  .k { color: #8b949e; }
+  .big { font-size: 30px; font-weight: 650; letter-spacing: -.02em; }
+  #log { margin-top: 18px; font: 12px/1.5 ui-monospace, monospace; color: #8b949e; white-space: pre-wrap; max-height: 220px; overflow: auto; }
+  #bar { height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; margin: 14px 0 0; }
+  #bar > i { display: block; height: 100%; width: 0; background: #2f81f7; transition: width .1s linear; }
+</style>
+<h1>P3 引擎验证</h1>
+<p class="hint">引擎跑在 Web Worker 里；这个页面只负责收快照。仅用于阶段验证，正式 UI 是 P4 的 Leptos。</p>
+
+<button id="run">开始（ping → 下载 → 上传）</button>
+<button id="dl" disabled>只测下载</button>
+<button id="ul" disabled>只测上传</button>
+<button id="abort" disabled>取消</button>
+
+<div id="bar"><i></i></div>
+<div id="out">
+  <div class="row"><span class="k">阶段</span><span id="phase">—</span></div>
+  <div class="row"><span class="k">当前速率</span><span class="big" id="status">—</span></div>
+  <div class="row"><span class="k">进度</span><span id="progress">—</span></div>
+  <div class="row"><span class="k">字节</span><span id="bytes">—</span></div>
+  <div class="row"><span class="k">ping / jitter</span><span id="ping">—</span></div>
+  <div class="row"><span class="k">下载结果</span><span id="dlres">—</span></div>
+  <div class="row"><span class="k">上传结果</span><span id="ulres">—</span></div>
+  <div class="row"><span class="k">采样点数</span><span id="npts">—</span></div>
+</div>
+<div id="log"></div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const worker = new Worker('./engine.worker.js', { type: 'module' });
+let started = 0;
+let frames = 0;
+
+function log(line) {
+  $('log').textContent += line + '\n';
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+worker.onmessage = (ev) => {
+  const msg = ev.data;
+  if (msg.type === 'frame') {
+    frames++;
+    const f = msg.frame;
+    $('phase').textContent = f.phase;
+    $('status').textContent = f.status ? f.status + ' Mbit/s' : '—';
+    $('progress').textContent = (f.progress * 100).toFixed(0) + '%';
+    $('bar').firstElementChild.style.width = (f.progress * 100).toFixed(1) + '%';
+    $('bytes').textContent = (f.bytes / 1048576).toFixed(1) + ' MiB';
+    $('ping').textContent = (f.ping ?? '—') + ' / ' + (f.jitter ?? '—');
+  } else if (msg.type === 'done') {
+    const f = msg.frame;
+    const ms = performance.now() - started;
+    $('dlres').textContent = f.download_mbps != null ? f.download_mbps.toFixed(2) + ' Mbit/s' : '—';
+    $('ulres').textContent = f.upload_mbps != null ? f.upload_mbps.toFixed(2) + ' Mbit/s' : '—';
+    $('npts').textContent = msg.samples.length + ' 点';
+    $('phase').textContent = f.phase;
+    log(`完成：${(ms / 1000).toFixed(2)} s，${frames} 帧，phase=${f.phase}，failed=${f.failed}`);
+    // 给自动化脚本读的汇总
+    document.title = `done ${f.download_mbps?.toFixed(2)} ${f.upload_mbps?.toFixed(2)} ${msg.samples.length}`;
+    window.__result = {
+      download_mbps: f.download_mbps,
+      upload_mbps: f.upload_mbps,
+      ping: f.ping,
+      jitter: f.jitter,
+      failed: f.failed,
+      samples: msg.samples.length,
+      wall_ms: ms,
+      frames,
+    };
+    setBusy(false);
+  }
+};
+
+function setBusy(busy) {
+  $('run').disabled = busy;
+  $('dl').disabled = busy;
+  $('ul').disabled = busy;
+  $('abort').disabled = !busy;
+  if (busy) {
+    started = performance.now();
+    frames = 0;
+    window.__result = null;
+    $('dlres').textContent = $('ulres').textContent = $('npts').textContent = '—';
+  }
+}
+
+function run(plan) {
+  const base = location.origin;
+  setBusy(true);
+  log('start base=' + base + ' plan=' + JSON.stringify(plan));
+  worker.postMessage({ cmd: 'start', base, plan });
+}
+
+$('run').onclick = () => run({ ping: true, download: true, upload: true });
+$('dl').onclick = () => run({ ping: false, download: true, upload: false, streams: 8 });
+$('ul').onclick = () => run({ ping: false, download: false, upload: true });
+$('abort').onclick = () => worker.postMessage({ cmd: 'abort' });
+
+// 自动化入口：?auto=1 直接开跑完整测试
+if (new URLSearchParams(location.search).get('auto')) {
+  setTimeout(() => run({ ping: true, download: true, upload: true }), 200);
+}
+setTimeout(() => setBusy(false), 0);
+</script>

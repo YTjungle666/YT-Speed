@@ -2,3 +2,6 @@ target/
 dist/
 *.wasm
 node_modules/
+
+# wasm-bindgen 产物（由 cargo + wasm-bindgen 生成，不入库）
+web/pkg/

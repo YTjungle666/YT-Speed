@@ -212,6 +212,43 @@ fn upload_uses_server_side_settlement() {
 }
 
 #[test]
+fn late_settlement_overrides_finished_upload() {
+    let mut e = engine_with(
+        Settings::default(),
+        TestPlan {
+            ping: false,
+            download: false,
+            upload: true,
+        },
+    );
+    let mut now = 0u64;
+    e.apply(Event::Start, 0.0);
+    while e.phase() == Phase::Upload {
+        now += STEP;
+        e.apply(Event::Bytes((RATE * 0.2) as u64), now as f64);
+        e.apply(Event::Tick, now as f64);
+    }
+    assert_eq!(e.phase(), Phase::Done);
+    let client_side = e.snapshot().upload_mbps.expect("阶段结束应有值");
+
+    // 结算迟到：服务端数的字节更少、耗时更长（客户端把还压在缓冲里的也算进来了）
+    e.apply(
+        Event::UploadSettled {
+            bytes: 100_000_000,
+            ms: 8_000.0,
+        },
+        now as f64 + 100.0,
+    );
+    let settled = e.snapshot().upload_mbps.expect("迟到结算也应覆盖");
+    assert!(
+        settled < client_side,
+        "服务端口径应更低：{settled} vs {client_side}"
+    );
+    let expected = 100_000_000.0 * 8.0 * 1.06 / 8.0 / 1_000_000.0;
+    assert!((settled - expected).abs() < 0.01, "{settled} vs {expected}");
+}
+
+#[test]
 fn stream_failure_ends_phase_and_flags_result() {
     let mut e = engine_with(Settings::default(), TestPlan::download_only());
     e.apply(Event::Start, 0.0);

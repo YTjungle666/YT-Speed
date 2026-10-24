@@ -211,6 +211,12 @@ impl Engine {
             }
             Event::UploadSettled { bytes, ms } => {
                 self.settled = Some((bytes, ms));
+                // 结算通常晚于阶段结束到达（要先关连接、再去取 token），
+                // 但服务端口径是权威值，所以**迟到也要覆盖**已定稿的上传结果。
+                // 浏览器实测：客户端按“已 send”计数比服务端高 6.6%，不能直接展示。
+                if self.phase == Phase::Done && ms > 0.0 {
+                    self.snapshot.upload_mbps = Some(self.conv.mbps(bytes as f64, ms / 1000.0));
+                }
             }
             Event::Tick => {
                 if matches!(self.phase, Phase::Download | Phase::Upload) {

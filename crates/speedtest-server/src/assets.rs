@@ -49,12 +49,15 @@ fn cache_control(path: &Path) -> &'static str {
         .map(|(_, tail)| tail.split('.').next().unwrap_or(""))
         .map(|hash| hash.len() >= 8 && hash.chars().all(|c| c.is_ascii_hexdigit()))
         .unwrap_or(false);
-    if hashed || name.ends_with(".wasm") {
+    // 只有**文件名里带内容哈希**的资产才 immutable。不能按扩展名给长缓存：
+    // 开发期 wasm 叫 speedtest_wasm_bg.wasm 这种固定名，一旦被浏览器按 immutable
+    // 缓存，重新构建后页面永远拿旧二进制（P3 验证时踩过，白等了两轮 15 秒）。
+    if hashed {
         "public, max-age=31536000, immutable"
     } else if name.ends_with(".html") || name.is_empty() {
         "no-cache"
     } else {
-        "public, max-age=3600"
+        "no-cache"
     }
 }
 
@@ -143,7 +146,9 @@ mod tests {
     fn wasm_gets_the_right_type_and_cache() {
         let p = Path::new("app.wasm");
         assert_eq!(content_type(p), "application/wasm");
-        assert!(cache_control(p).contains("immutable"));
+        // 固定名不允许 immutable，否则重建后页面拿旧二进制
+        assert!(!cache_control(p).contains("immutable"));
+        assert!(cache_control(Path::new("app-3f9a1c2b.wasm")).contains("immutable"));
 
         let hashed = Path::new("assets/index-3f9a1c2b.js");
         assert_eq!(content_type(hashed), "text/javascript; charset=utf-8");

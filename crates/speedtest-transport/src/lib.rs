@@ -10,5 +10,5 @@
 pub mod driver;
 pub mod ring;
 
-pub use driver::{Driver, Transport, UiFrame, UI_INTERVAL_MS};
+pub use driver::{Driver, Signal, Transport, UiFrame, CORE_TICK_MS, MAX_SIGNALS, UI_INTERVAL_MS};
 pub use ring::{Sample, SampleRing, MAX_SAMPLES};

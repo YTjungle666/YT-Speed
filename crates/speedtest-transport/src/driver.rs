@@ -14,7 +14,11 @@ use speedtest_core::{Command, Dir, Engine, Event, Phase, Settings, TestPlan};
 
 use crate::ring::{Sample, SampleRing};
 
-/// 传输层需要实现的三个动作。故意做得极小，方便在 wasm 和测试里各写一份。
+/// 传输层需要实现的三个动作，加上一个“拉取观测”的出口。
+///
+/// 为什么是**拉**不是回调：wasm 里回调用处是单线程 `Rc<RefCell<_>>`，如果传输层
+/// 反向持有 driver 的弱引用，代码会绕成一团；而字节计数本来就是累加的，
+/// 每次 tick 拉一次增量最简单，也天然有界（不排队、不备份）。
 pub trait Transport {
     /// 开传输流；第 i 条流延迟 `i * stagger_ms` 起跑。
     fn start_streams(&mut self, dir: Dir, count: u32, stagger_ms: f64);
@@ -22,7 +26,24 @@ pub trait Transport {
     fn stop_all(&mut self);
     /// 发一次 ping。
     fn ping(&mut self, seq: u32);
+    /// 拉取自上次调用以来的观测。实现方必须保证返回长度有界（`MAX_SIGNALS`），
+    /// 且字节数不能丢（合并成一个增量，而不是每块一条）。
+    fn take_signals(&mut self) -> Vec<Signal> {
+        Vec::new()
+    }
 }
+
+/// 传输层观测到的事件。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Signal {
+    Bytes(u64),
+    Pong(f64),
+    StreamFailed,
+    UploadSettled { bytes: u64, ms: f64 },
+}
+
+/// 单次拉取的信号条数上限（pong 最多 ping_count 条，字节合并成一条）。
+pub const MAX_SIGNALS: usize = 32;
 
 /// 发给 UI 的一帧快照。字段都是定长的，直接 postMessage 也行。
 #[derive(Clone, Debug, PartialEq)]
@@ -42,12 +63,16 @@ pub struct UiFrame {
 /// UI 上报间隔：10 Hz 够画曲线，又不会把主线程刷爆。
 pub const UI_INTERVAL_MS: f64 = 100.0;
 
+/// core 的节拍（与上游 `setInterval(..., 200)` 一致）。
+pub const CORE_TICK_MS: f64 = 200.0;
+
 pub struct Driver<T: Transport> {
     engine: Engine,
     transport: T,
     ring: SampleRing,
     started_ms: Option<f64>,
     last_ui_ms: f64,
+    last_core_tick_ms: f64,
 }
 
 impl<T: Transport> Driver<T> {
@@ -58,6 +83,7 @@ impl<T: Transport> Driver<T> {
             ring: SampleRing::new(),
             started_ms: None,
             last_ui_ms: f64::NEG_INFINITY,
+            last_core_tick_ms: f64::NEG_INFINITY,
         }
     }
 
@@ -113,9 +139,27 @@ impl<T: Transport> Driver<T> {
         self.pump(Event::Abort, now_ms);
     }
 
-    /// 每 200 ms 调一次（对应 core 的节拍）。返回是否需要给 UI 发新帧。
+    /// 由调用方按 100 ms 节奏调用（浏览器里是 worker 的 setInterval）。
+    ///
+    /// - 传输层观测先拉进来；
+    /// - core 的 `Tick` 按 200 ms 节流（与上游 `setInterval(...,200)` 一致，
+    ///   否则 `time_auto` 的 bonus 会按调用频率翻倍累加）；
+    /// - UI 帧按 100 ms 节流。
     pub fn tick(&mut self, now_ms: f64) -> Option<UiFrame> {
-        self.pump(Event::Tick, now_ms);
+        for sig in self.transport.take_signals() {
+            match sig {
+                Signal::Bytes(n) => self.pump(Event::Bytes(n), now_ms),
+                Signal::Pong(rtt) => self.pump(Event::Pong(rtt), now_ms),
+                Signal::StreamFailed => self.pump(Event::StreamFailed, now_ms),
+                Signal::UploadSettled { bytes, ms } => {
+                    self.pump(Event::UploadSettled { bytes, ms }, now_ms)
+                }
+            }
+        }
+        if now_ms - self.last_core_tick_ms >= CORE_TICK_MS {
+            self.last_core_tick_ms = now_ms;
+            self.pump(Event::Tick, now_ms);
+        }
         self.maybe_sample(now_ms);
         if now_ms - self.last_ui_ms >= UI_INTERVAL_MS {
             self.last_ui_ms = now_ms;
