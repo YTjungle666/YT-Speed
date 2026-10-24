@@ -54,9 +54,8 @@ fn cache_control(path: &Path) -> &'static str {
     // 缓存，重新构建后页面永远拿旧二进制（P3 验证时踩过，白等了两轮 15 秒）。
     if hashed {
         "public, max-age=31536000, immutable"
-    } else if name.ends_with(".html") || name.is_empty() {
-        "no-cache"
     } else {
+        // 固定名的资产一律每次校验，构建产物换了能立刻生效
         "no-cache"
     }
 }
