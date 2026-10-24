@@ -274,6 +274,22 @@ legacy 上传 7,834~8,052（实测 7,390~7,596），差在 6 条 XHR 请求之�
 P0 的 TCP_INFO 已经指到 `rwnd_limited≈45%`、`sndbuf_limited=0`、重传 0。
 再往上要么换客户端（Linux/裸 socket），要么改协议（QUIC），都不在这个项目的范围内。
 
+## P4a UI（Leptos CSR，2026-10-24）
+
+`crates/speedtest-ui` 只做显示与交互，测量链原样复用：UI → `web/engine.worker.js`（持 wasm）
+→ `speedtest-transport`。换界面不可能改到测量口径，这是分层的主要目的。
+
+| 项 | 结果 |
+|---|---|
+| 端到端（本机回环，6 路） | 下载 28,248.54 / 上传 12,991.62 Mbit/s，ping 1.00 ms，jitter 1.48 ms，108 点 |
+| JS 错误 | 0（Chromium 156） |
+| 移动视口 390×844 | 无横向溢出，结果卡片降为单列，按钮可点 |
+| 产物 | wasm 1,266,169 B（gzip 215,207 B）、js 35 KB、css 5.4 KB |
+
+两个坑记一下：`data-trunk public_url` 必须设成部署路径（`/app/`），否则生成的绝对路径 404，
+页面一片空白且控制台没有一行错误；worker 必须 `{type:'module'}`，普通 worker 直接
+`Cannot use import statement outside a module`，同样表现为「点了没反应」。
+
 ## 复现方式
 
 ```sh
