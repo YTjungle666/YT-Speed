@@ -7,6 +7,7 @@ mod assets;
 mod config;
 mod garbage;
 mod getip;
+mod limits;
 mod upload;
 
 use std::net::SocketAddr;
@@ -35,6 +36,8 @@ struct App {
     cfg: Config,
     payload: Payload,
     settlements: Arc<Settlements>,
+    /// WS 连接数闸门：超过 `MAX_WS_CONNECTIONS` 直接 503，绝不无界排队。
+    ws_slots: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(serde::Deserialize)]
@@ -101,7 +104,16 @@ async fn empty_post(State(app): State<App>, body: axum::body::Body) -> Response 
 }
 
 async fn ws_upload(State(app): State<App>, ws: axum::extract::ws::WebSocketUpgrade) -> Response {
-    upload::ws_upload(ws, app.settlements.clone(), app.cfg.max_upload_mbps)
+    // 连接数闸门：拿不到许可就 503，不排队、不等待（排队会把内存留给等待者）
+    let Ok(permit) = app.ws_slots.clone().try_acquire_owned() else {
+        tracing::warn!("WS 连接数已达上限，拒绝新连接");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too many websocket connections",
+        )
+            .into_response();
+    };
+    upload::ws_upload(ws, app.settlements.clone(), app.cfg.max_upload_mbps, permit)
 }
 
 fn router(app: App) -> Router {
@@ -235,6 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg: cfg.clone(),
         payload,
         settlements: Arc::new(Settlements::default()),
+        ws_slots: Arc::new(tokio::sync::Semaphore::new(limits::MAX_WS_CONNECTIONS)),
     };
 
     let listener = tokio::net::TcpListener::bind(cfg.listen).await?;

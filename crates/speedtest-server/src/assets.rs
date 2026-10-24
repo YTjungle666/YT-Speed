@@ -63,17 +63,36 @@ pub async fn serve(root: PathBuf, rel: String) -> Response {
         return (StatusCode::FORBIDDEN, "bad path").into_response();
     };
     let path = root.join(&safe);
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type(&path))
-            .header(header::CACHE_CONTROL, cache_control(&path))
-            .header("x-content-type-options", "nosniff")
-            .body(Body::from(bytes))
-            .expect("响应构造失败")
-            .into_response(),
-        Err(_) => (StatusCode::NOT_FOUND, "not found").into_response(),
+    let meta = match tokio::fs::metadata(&path).await {
+        Ok(m) => m,
+        Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+    };
+    if !meta.is_file() {
+        return (StatusCode::NOT_FOUND, "not found").into_response();
     }
+    // 资产是流式发的，不整体读进内存：一个 40 MB 的 wasm 被 8 个标签页同时拉，
+    // 读进 Vec 就是 320 MB 峰值；流式的峰值只有读缓冲大小。
+    if meta.len() > crate::limits::MAX_ASSET_BYTES {
+        tracing::warn!(path = %path.display(), len = meta.len(), "资产超过上限，拒绝发送");
+        return (StatusCode::PAYLOAD_TOO_LARGE, "asset too large").into_response();
+    }
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+    };
+    let body = Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+        file,
+        crate::limits::STREAM_BUFFER_BYTES,
+    ));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type(&path))
+        .header(header::CONTENT_LENGTH, meta.len())
+        .header(header::CACHE_CONTROL, cache_control(&path))
+        .header("x-content-type-options", "nosniff")
+        .body(body)
+        .expect("响应构造失败")
+        .into_response()
 }
 
 /// 入口：没有 `index.html` 时给一个自带说明的占位页，避免部署时一片空白。

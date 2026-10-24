@@ -2,7 +2,7 @@
 //!
 //! 用法：
 //! ```sh
-//! cargo run --release --example wsclient -- ws://127.0.0.1:8080/backend/ws-upload 10
+//! cargo run --release --example wsclient -- ws://127.0.0.1:8080/backend/ws-upload 10 [frame_kib]
 //! ```
 //!
 //! 这个工具存在的意义是把“服务端数到的字节”和“客户端推了多少”分开看：
@@ -20,6 +20,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .next()
         .unwrap_or_else(|| "ws://127.0.0.1:8080/backend/ws-upload".into());
     let total_gb: f64 = args.next().and_then(|v| v.parse().ok()).unwrap_or(10.0);
+    // 第 3 个参数可指定帧大小（KiB），用来验证服务端的帧上限
+    let frame_kib: usize = args.next().and_then(|v| v.parse().ok()).unwrap_or(1024);
 
     let (mut ws, _resp) = tokio_tungstenite::connect_async(&url).await?;
 
@@ -33,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("token={token}");
 
-    let frame = vec![0xA5u8; 1024 * 1024];
+    let frame = vec![0xA5u8; frame_kib * 1024];
     let total_bytes = (total_gb * 1024.0 * 1024.0 * 1024.0) as u64;
     let mut sent = 0u64;
     let started = Instant::now();

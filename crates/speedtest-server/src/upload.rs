@@ -76,6 +76,28 @@ pub struct Settlements {
 }
 
 impl Settlements {
+    /// 插入前统一做清理：先刷掉过期的，仍然超限就挤掉最旧的一条。
+    /// 这样表的大小永远 ≤ `MAX_SETTLEMENTS`，不会因为客户端反复握手而涨。
+    fn insert_locked(
+        map: &mut HashMap<String, (Settled, Instant)>,
+        token: String,
+        result: Settled,
+    ) {
+        map.retain(|_, (_, at)| at.elapsed() < SETTLE_TTL);
+        if map.len() >= crate::limits::MAX_SETTLEMENTS {
+            if let Some(oldest) = map
+                .iter()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(k, _)| k.clone())
+            {
+                map.remove(&oldest);
+            }
+        }
+        map.insert(token, (result, Instant::now()));
+    }
+}
+
+impl Settlements {
     /// WS 路径需要先生成 token 再插入（要提前告诉客户端），单测用这个便捷版本。
     #[cfg(test)]
     fn insert(&self, result: Settled) -> String {
@@ -166,16 +188,21 @@ pub fn ws_upload(
     ws: WebSocketUpgrade,
     settlements: std::sync::Arc<Settlements>,
     limit_mbps: f64,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Response {
-    ws.max_message_size(usize::MAX)
-        .max_frame_size(usize::MAX)
-        .on_upgrade(move |socket| handle_ws(socket, settlements, limit_mbps))
+    // 上限的作用是“内存有界”，不是防攻击：axum 会把一条消息聚合完再交给我们，
+    // 不设限的话一个 10 GB 的帧就等于一次 10 GB 的内存分配。
+    ws.max_message_size(crate::limits::MAX_WS_MESSAGE_BYTES)
+        .max_frame_size(crate::limits::MAX_WS_MESSAGE_BYTES)
+        .on_upgrade(move |socket| handle_ws(socket, settlements, limit_mbps, permit))
 }
 
 async fn handle_ws(
     mut socket: WebSocket,
     settlements: std::sync::Arc<Settlements>,
     limit_mbps: f64,
+    // 持有许可直到连接结束，释放回信号量；这里不解引用，删掉就会提前放行
+    _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
     // 先下发 token：客户端必须在推数据前读到它
     let token = random_token();
@@ -217,8 +244,7 @@ impl Settlements {
     /// WS 路径已经先生成了 token（要提前告诉客户端），所以单独一个插入方法。
     fn insert_with_token(&self, token: String, result: Settled) {
         let mut map = self.inner.lock().expect("结算表锁中毒");
-        map.retain(|_, (_, at)| at.elapsed() < SETTLE_TTL);
-        map.insert(token, (result, Instant::now()));
+        Self::insert_locked(&mut map, token, result);
     }
 }
 
@@ -269,6 +295,24 @@ mod tests {
     fn unknown_token_is_none() {
         let s = Settlements::default();
         assert!(s.take("deadbeef").is_none());
+    }
+
+    #[test]
+    fn settlements_never_grow_past_limit() {
+        let s = Settlements::default();
+        // 模拟客户端疯狂握手：插入远超上限的条目
+        for _ in 0..(crate::limits::MAX_SETTLEMENTS * 2) {
+            s.insert(Settled {
+                bytes: 1,
+                ms: 1.0,
+                gbps: 1.0,
+            });
+        }
+        assert!(
+            s.len() <= crate::limits::MAX_SETTLEMENTS,
+            "结算表涨到了 {}",
+            s.len()
+        );
     }
 
     #[test]
