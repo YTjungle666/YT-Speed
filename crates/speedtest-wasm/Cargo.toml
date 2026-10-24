@@ -24,5 +24,5 @@ features = [
   "AbortController", "AbortSignal", "BinaryType", "DedicatedWorkerGlobalScope",
   "ErrorEvent", "MessageEvent", "Performance", "ReadableStream",
   "ReadableStreamDefaultReader", "Request", "RequestCache", "RequestInit",
-  "Response", "WebSocket", "WorkerGlobalScope",
+  "Response", "WebSocket", "WorkerGlobalScope", "XmlHttpRequest",
 ]

@@ -18,7 +18,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 use web_sys::{
     AbortController, BinaryType, ReadableStreamDefaultReader, Request, RequestCache, RequestInit,
-    Response, WebSocket, WorkerGlobalScope,
+    Response, WebSocket, WorkerGlobalScope, XmlHttpRequest,
 };
 
 /// 上传帧大小：1 MiB（实测最优，见 PLAN §0.5 的帧大小对照）。
@@ -27,6 +27,17 @@ const UPLOAD_FRAME_BYTES: usize = 1024 * 1024;
 const UPLOAD_HIGH_WATER: u32 = 8 * 1024 * 1024;
 /// 等待背压时的让步间隔。
 const YIELD_MS: i32 = 1;
+/// XHR 降级时的并发流数（上游 `xhr_multistream` 默认 3，这里给 4）。
+const XHR_STREAMS: u32 = 4;
+/// WS 握手超时：超时就认定不可用，切 XHR 降级。
+const WS_PROBE_TIMEOUT_MS: i32 = 1500;
+
+/// 上传通道。降级必须**显式标注**，不能让页面假装还是 WS 口径。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UploadMode {
+    Ws,
+    Xhr,
+}
 
 fn global() -> WorkerGlobalScope {
     js_sys::global().unchecked_into::<WorkerGlobalScope>()
@@ -64,6 +75,12 @@ pub struct WasmTransport {
     /// 收尾标记：`stop_all` 关连接时置位。发送循环看到它就明白
     /// “send 失败是正常收尾”，不能记成传输失败——否则每轮结束都报 failed。
     stopping: Rc<Cell<bool>>,
+    /// 当前上传通道。
+    mode: Rc<Cell<UploadMode>>,
+    /// WS 挂了（构造失败 / 握手超时 / 未打开就关闭）：下一次 `take_signals` 时切 XHR。
+    ws_failed: Rc<Cell<bool>>,
+    /// 降级时要知道开几路、错开多少。
+    pending_streams: (u32, f64),
 }
 
 impl WasmTransport {
@@ -76,6 +93,9 @@ impl WasmTransport {
             ws_token: Rc::new(RefCell::new(None)),
             stopped: false,
             stopping: Rc::new(Cell::new(false)),
+            mode: Rc::new(Cell::new(UploadMode::Ws)),
+            ws_failed: Rc::new(Cell::new(false)),
+            pending_streams: (XHR_STREAMS, 300.0),
         }
     }
 
@@ -227,7 +247,102 @@ impl WasmTransport {
         });
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
         onopen.forget();
+
+        // 握手失败探测：onerror/onclose 里翻标志，另加一个超时兜底
+        // （某些环境既不报 error 也不报 close，只是永远不 open）
+        let failed = self.ws_failed.clone();
+        let stopping = self.stopping.clone();
+        let on_fail = Closure::<dyn FnMut()>::new(move || {
+            if !stopping.get() {
+                failed.set(true);
+            }
+        });
+        ws.set_onerror(Some(on_fail.as_ref().unchecked_ref()));
+        ws.set_onclose(Some(on_fail.as_ref().unchecked_ref()));
+        on_fail.forget();
+
+        let failed = self.ws_failed.clone();
+        let stopping = self.stopping.clone();
+        let probe = ws.clone();
+        spawn_local(async move {
+            sleep_ms(WS_PROBE_TIMEOUT_MS).await;
+            if probe.ready_state() != WebSocket::OPEN && !stopping.get() {
+                failed.set(true);
+            }
+        });
+
         self.ws = Some(ws);
+    }
+}
+
+impl WasmTransport {
+    /// XHR 降级：多路 `POST /backend/empty`，每发完一条立刻重发。
+    ///
+    /// 为什么降级要单独写：WS 不可用时（代理拦截、企业网络、老旧内核）不能直接没数。
+    /// XHR 的口径本来就要客户端自己数（服务端不按 token 结算），所以这里按
+    /// “send 返回、且已离开浏览器队列”计——数字会略高于服务端，页面会显式标注 XHR。
+    fn start_xhr(&mut self, streams: u32, stagger_ms: f64) {
+        self.mode.set(UploadMode::Xhr);
+        let count = streams.max(1).min(16);
+        for i in 0..count {
+            let delay = (stagger_ms * i as f64) as i32;
+            let url = format!("{}/backend/empty", self.base);
+            let meters = self.meters.clone();
+            let stopping = self.stopping.clone();
+            spawn_local(async move {
+                if delay > 0 {
+                    sleep_ms(delay).await;
+                }
+                // 1 MiB 复用缓冲：不随时间增长，也不按请求数量增长
+                let frame = vec![0xA5u8; UPLOAD_FRAME_BYTES];
+                while !stopping.get() {
+                    let Ok(xhr) = XmlHttpRequest::new() else {
+                        meters.failed.set(true);
+                        return;
+                    };
+                    if xhr.open_with_async("POST", &url, true).is_err() {
+                        meters.failed.set(true);
+                        return;
+                    }
+                    let _ = xhr.set_request_header("Content-Type", "application/octet-stream");
+                    let xhr_clone = xhr.clone();
+                    let promise = js_sys::Promise::new(&mut |resolve, reject| {
+                        let ok = resolve.clone();
+                        let bad = reject.clone();
+                        let onload = Closure::<dyn FnMut()>::new(move || {
+                            let _ = ok.call0(&JsValue::NULL);
+                        });
+                        let onerror = Closure::<dyn FnMut()>::new(move || {
+                            let _ = bad.call1(&JsValue::NULL, &JsValue::from_str("xhr error"));
+                        });
+                        xhr_clone.set_onload(Some(onload.as_ref().unchecked_ref()));
+                        xhr_clone.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+                        onload.forget();
+                        onerror.forget();
+                    });
+                    if xhr.send_with_opt_u8_array(Some(&frame)).is_err() {
+                        meters.failed.set(true);
+                        return;
+                    }
+                    // 请求在飞的时候就已经把字节推出去了，先计数再等回包
+                    meters.bytes.set(meters.bytes.get() + frame.len() as u64);
+                    if JsFuture::from(promise).await.is_err() {
+                        if !stopping.get() {
+                            meters.failed.set(true);
+                        }
+                        return;
+                    }
+                }
+            });
+        }
+    }
+}
+
+impl WasmTransport {
+    /// 强制走 XHR（降级模式，也用于验收对照：同一份代码两条通道对比）。
+    pub fn force_xhr(self) -> Self {
+        self.mode.set(UploadMode::Xhr);
+        self
     }
 }
 
@@ -237,7 +352,16 @@ impl Transport for WasmTransport {
         self.stopping.set(false);
         match dir {
             Dir::Down => self.start_download(count, stagger_ms),
-            Dir::Up => self.start_upload(),
+            Dir::Up => {
+                self.pending_streams = (XHR_STREAMS, 300.0);
+                if self.mode.get() == UploadMode::Xhr {
+                    self.start_xhr(count, stagger_ms);
+                } else {
+                    let (saved, st) = (count, stagger_ms);
+                    self.pending_streams = (saved, st);
+                    self.start_upload();
+                }
+            }
         }
     }
 
@@ -286,6 +410,13 @@ impl Transport for WasmTransport {
         }
     }
 
+    fn upload_mode(&self) -> &'static str {
+        match self.mode.get() {
+            UploadMode::Ws => "ws",
+            UploadMode::Xhr => "xhr",
+        }
+    }
+
     fn ping(&mut self, _seq: u32) {
         // ping 走轻量 fetch 到 /backend/empty，用 performance.now() 计时
         let url = format!("{}/backend/empty?r={}", self.base, js_sys::Math::random());
@@ -307,6 +438,11 @@ impl Transport for WasmTransport {
 
     fn take_signals(&mut self) -> Vec<Signal> {
         let mut out = Vec::with_capacity(4);
+        // WS 判定不可用 → 切 XHR（只切一次；already Xhr 时 ws_failed 不再置位）
+        if self.ws_failed.replace(false) && self.mode.get() == UploadMode::Ws && !self.stopped {
+            let (count, stagger) = self.pending_streams;
+            self.start_xhr(count, stagger);
+        }
         let pending = self.meters.bytes.replace(0);
         if pending > 0 {
             out.push(Signal::Bytes(pending));

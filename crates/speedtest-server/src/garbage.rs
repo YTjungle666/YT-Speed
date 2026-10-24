@@ -51,21 +51,18 @@ pub fn parse_ck_size(raw: Option<&str>) -> u32 {
     }
 }
 
-/// 构造下载响应。`limit_mbps > 0` 时按块摊平速率（用于“温和模式”）。
-pub fn garbage_response(payload: &Payload, ck_size: u32, limit_mbps: f64) -> Response {
+/// 构造下载响应。传入聚合限速器时按块摊平速率（用于“温和模式”）。
+pub fn garbage_response(
+    payload: &Payload,
+    ck_size: u32,
+    limiter: std::sync::Arc<crate::pace::RateLimiter>,
+) -> Response {
     let total = ck_size as usize * SLICE_BYTES;
     let block = payload.block().clone();
-    // 限速按“累计字节对应的时刻表”睡眠，而不是每块固定睡一段：
-    // 固定睡眠会被每次 sleep 的调度误差累加，64 MiB 能差出 7%。
-    let bytes_per_sec = if limit_mbps > 0.0 {
-        Some(limit_mbps * 1_000_000.0 / 8.0)
-    } else {
-        None
-    };
-    let started = std::time::Instant::now();
 
     let body_stream = stream::unfold((0usize, 0usize), move |(offset, sent)| {
         let block = block.clone();
+        let limiter = limiter.clone();
         async move {
             if sent >= total {
                 return None;
@@ -74,12 +71,10 @@ pub fn garbage_response(payload: &Payload, ck_size: u32, limit_mbps: f64) -> Res
             let start = offset % block.len();
             // 单块内切片；跨块时（不会发生，8 MiB 是 1 MiB 的整数倍）也安全
             let chunk = block.slice(start..start + take);
-            if let Some(bps) = bytes_per_sec {
-                let due = started + std::time::Duration::from_secs_f64((sent + take) as f64 / bps);
-                let now = std::time::Instant::now();
-                if due > now {
-                    tokio::time::sleep(due - now).await;
-                }
+            // 限速交给**聚合**限速器：所有并发响应共用一条时间轴，
+            // 否则 8 路并行会把 1000 Mbit/s 限速乘成 8 倍（第一版就是这样，实测 4.8 Gbit/s）。
+            if limiter.is_limited() {
+                limiter.reserve(take).await;
             }
             Some((
                 Ok::<Bytes, Infallible>(chunk),

@@ -8,6 +8,18 @@ import init, { start, tick, abort, samples_json } from './pkg/speedtest_wasm.js'
 
 let running = false;
 let timer = null;
+let inited = false;
+
+// worker 里的异常默认是静默的：页面只看到“没有任何响应”，控制台也是干净的。
+// 排查过一次“worker 完全不回消息”，就是靠这几行才看到真实原因。
+self.onerror = (e) =>
+  self.postMessage({ type: 'error', where: 'worker', message: String(e.message || e) });
+self.addEventListener('unhandledrejection', (e) =>
+  self.postMessage({
+    type: 'error',
+    where: 'rejection',
+    message: String((e.reason && (e.reason.message || e.reason)) || 'unknown'),
+  }));
 
 function stopLoop() {
   running = false;
@@ -17,13 +29,37 @@ function stopLoop() {
   }
 }
 
+async function ensureInit() {
+  if (inited) return;
+  await init();
+  inited = true;
+}
+
 self.onmessage = async (ev) => {
   const msg = ev.data || {};
+
+  // 预热：页面在跑任何测试之前先让 wasm 落地。
+  // 否则第一次测试要和遗留连接抢“每主机 6 个连接”的名额，init 会一直挂着。
+  if (msg.cmd === 'init') {
+    try {
+      await ensureInit();
+      self.postMessage({ type: 'init-done' });
+    } catch (err) {
+      self.postMessage({ type: 'error', where: 'init', message: String((err && err.message) || err) });
+    }
+    return;
+  }
+
   if (msg.cmd === 'start') {
     stopLoop();
-    await init();
-    // 与 tick() 用同一个时钟（performance.now），否则时间基准不一致
-    start(msg.base, JSON.stringify(msg.plan || {}), performance.now());
+    try {
+      await ensureInit();
+      // 与 tick() 用同一个时钟（performance.now），否则时间基准不一致
+      start(msg.base, JSON.stringify(msg.plan || {}), performance.now());
+    } catch (err) {
+      self.postMessage({ type: 'error', where: 'start', message: String((err && err.message) || err) });
+      return;
+    }
     running = true;
 
     let drainUntil = 0; // 结束后继续跑一小段，等上传结算到达

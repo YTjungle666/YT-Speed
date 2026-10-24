@@ -23,7 +23,8 @@
 
 <button id="run">开始（ping → 下载 → 上传）</button>
 <button id="dl" disabled>只测下载</button>
-<button id="ul" disabled>只测上传</button>
+<button id="ul" disabled>只测上传（WS）</button>
+<button id="ulxhr" disabled>只测上传（XHR 降级）</button>
 <button id="abort" disabled>取消</button>
 
 <div id="bar"><i></i></div>
@@ -36,6 +37,7 @@
   <div class="row"><span class="k">ping / jitter</span><span id="ping">—</span></div>
   <div class="row"><span class="k">下载结果</span><span id="dlres">—</span></div>
   <div class="row"><span class="k">上传结果</span><span id="ulres">—</span></div>
+  <div class="row"><span class="k">上传通道</span><span id="ulmode">—</span></div>
   <div class="row"><span class="k">采样点数</span><span id="npts">—</span></div>
 </div>
 <div id="log"></div>
@@ -63,6 +65,7 @@ worker.onmessage = (ev) => {
     $('progress').textContent = (f.progress * 100).toFixed(0) + '%';
     $('bar').firstElementChild.style.width = (f.progress * 100).toFixed(1) + '%';
     $('bytes').textContent = (f.bytes / 1048576).toFixed(1) + ' MiB';
+    $('ulmode').textContent = f.upload_mode === 'xhr' ? 'XHR（降级，客户端计数）' : 'WebSocket（服务端结算）';
     $('ping').textContent = (f.ping ?? '—') + ' / ' + (f.jitter ?? '—');
   } else if (msg.type === 'done') {
     const f = msg.frame;
@@ -101,7 +104,9 @@ function setBusy(busy) {
   $('run').disabled = busy;
   $('dl').disabled = busy;
   $('ul').disabled = busy;
+  $('ulxhr').disabled = busy;
   $('abort').disabled = !busy;
+  $('ulxhr').disabled = busy;
   if (busy) {
     started = performance.now();
     frames = 0;
@@ -117,9 +122,12 @@ function run(plan) {
   worker.postMessage({ cmd: 'start', base, plan });
 }
 
+// 自动化对照测试用：把 run 暴露出去，便于同一页面交替驱动两套引擎
+window.__run = run;
 $('run').onclick = () => run({ ping: true, download: true, upload: true });
 $('dl').onclick = () => run({ ping: false, download: true, upload: false, streams: 8 });
 $('ul').onclick = () => run({ ping: false, download: false, upload: true });
+$('ulxhr').onclick = () => run({ ping: false, download: false, upload: true, xhr: true });
 $('abort').onclick = () => worker.postMessage({ cmd: 'abort' });
 
 // 自动化入口：?auto=1 直接开跑完整测试

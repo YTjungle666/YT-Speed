@@ -27,42 +27,6 @@ use serde::{Deserialize, Serialize};
 /// 结算结果有效期。
 const SETTLE_TTL: Duration = Duration::from_secs(10);
 
-/// 上传限速器：按“累计字节对应的时刻表”睡眠，让读取速度不超过目标速率。
-///
-/// 为什么靠睡而不是丢数据：睡眠会让接收窗口收缩，TCP 自然把客户端压下来，
-/// 这才是真实的限速；丢数据会变成“限速 + 重传”，客户端看到的数字会失真。
-pub struct Pacer {
-    bytes_per_sec: Option<f64>,
-    started: std::time::Instant,
-    bytes: u64,
-}
-
-impl Pacer {
-    pub fn new(limit_mbps: f64) -> Self {
-        Self {
-            bytes_per_sec: if limit_mbps > 0.0 {
-                Some(limit_mbps * 1_000_000.0 / 8.0)
-            } else {
-                None
-            },
-            started: std::time::Instant::now(),
-            bytes: 0,
-        }
-    }
-
-    /// 记下刚收到的字节，必要时让读取停一会儿。
-    pub async fn account(&mut self, n: u64) {
-        self.bytes += n;
-        if let Some(bps) = self.bytes_per_sec {
-            let due = self.started + Duration::from_secs_f64(self.bytes as f64 / bps);
-            let now = std::time::Instant::now();
-            if due > now {
-                tokio::time::sleep(due - now).await;
-            }
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settled {
     pub bytes: u64,
@@ -141,9 +105,8 @@ pub async fn empty_get() -> Response {
 ///
 /// `Expect: 100-continue` 由 hyper 在第一次 poll body 时自动回 `100 Continue`，
 /// 所以这里只要**确实去 poll** 就不会把客户端卡住。
-pub async fn empty_post(body: Body, limit_mbps: f64) -> Response {
+pub async fn empty_post(body: Body, limiter: std::sync::Arc<crate::pace::RateLimiter>) -> Response {
     let started = Instant::now();
-    let mut pacer = Pacer::new(limit_mbps);
     let mut bytes = 0u64;
     let mut frames = 0u64;
     use http_body_util::BodyExt;
@@ -156,7 +119,9 @@ pub async fn empty_post(body: Body, limit_mbps: f64) -> Response {
                     bytes += n;
                     frames += 1;
                 }
-                pacer.account(n).await;
+                if limiter.is_limited() {
+                    limiter.reserve(n as usize).await;
+                }
             }
             Err(e) => {
                 tracing::warn!(error = %e, "上传请求体读取出错");
@@ -187,20 +152,20 @@ pub async fn empty_post(body: Body, limit_mbps: f64) -> Response {
 pub fn ws_upload(
     ws: WebSocketUpgrade,
     settlements: std::sync::Arc<Settlements>,
-    limit_mbps: f64,
+    limiter: std::sync::Arc<crate::pace::RateLimiter>,
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Response {
     // 上限的作用是“内存有界”，不是防攻击：axum 会把一条消息聚合完再交给我们，
     // 不设限的话一个 10 GB 的帧就等于一次 10 GB 的内存分配。
     ws.max_message_size(crate::limits::MAX_WS_MESSAGE_BYTES)
         .max_frame_size(crate::limits::MAX_WS_MESSAGE_BYTES)
-        .on_upgrade(move |socket| handle_ws(socket, settlements, limit_mbps, permit))
+        .on_upgrade(move |socket| handle_ws(socket, settlements, limiter, permit))
 }
 
 async fn handle_ws(
     mut socket: WebSocket,
     settlements: std::sync::Arc<Settlements>,
-    limit_mbps: f64,
+    limiter: std::sync::Arc<crate::pace::RateLimiter>,
     // 持有许可直到连接结束，释放回信号量；这里不解引用，删掉就会提前放行
     _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
@@ -213,13 +178,28 @@ async fn handle_ws(
 
     let started = Instant::now();
     let mut bytes = 0u64;
-    let mut pacer = Pacer::new(limit_mbps);
-    while let Some(msg) = socket.recv().await {
+    // 限速要“先预留再读”，不能“先读再睡”：
+    // 先读的话，每次都在等数据到达（客户端被上一轮的睡眠卡住）之后再睡满一个窗口，
+    // 两者串行叠加，1 Gbps 实测只跑到 0.86 Gbps。
+    // 先预留则在睡眠期间数据已经在缓冲里，醒来立刻能读，睡眠时长就是真正的节流。
+    let mut expected = crate::limits::WS_FRAME_HINT;
+    loop {
+        // 先预留再读：睡眠期间客户端的数据会堆在内核缓冲里，醒来立刻能读，
+        // 睡眠时长就是真正的节流。反过来“先读再睡”是两段串行等待，
+        // 1 Gbps 实测只跑到 0.86 Gbps（-14%）。
+        if limiter.is_limited() {
+            limiter.reserve(expected).await;
+        }
+        let Some(msg) = socket.recv().await else {
+            break;
+        };
         match msg {
             Ok(Message::Binary(b)) => {
                 let n = b.len() as u64;
                 bytes += n;
-                pacer.account(n).await;
+                if limiter.is_limited() {
+                    expected = n as usize;
+                }
             }
             Ok(Message::Close(_)) => break,
             Ok(_) => {}

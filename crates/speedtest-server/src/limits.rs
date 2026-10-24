@@ -29,6 +29,10 @@ pub const MAX_SETTLEMENTS: usize = 1024;
 /// 资产是流式发送的（不整体读进内存），这个值只用来挡“误把镜像放进 web/”这类事故。
 pub const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
+/// WS 上传限速时的预留粒度（客户端帧是 1 MiB；这里只是“先预留再读”的初始猜测，
+/// 收到第一帧后就会用真实帧长替换）。
+pub const WS_FRAME_HINT: usize = 1024 * 1024;
+
 /// 静态资产流式发送时的读缓冲。单连接内存 ≈ 这个值 × 分块数，128 KiB 足够打满万兆。
 pub const STREAM_BUFFER_BYTES: usize = 128 * 1024;
 

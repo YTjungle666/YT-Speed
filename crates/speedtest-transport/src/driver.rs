@@ -31,6 +31,11 @@ pub trait Transport {
     fn take_signals(&mut self) -> Vec<Signal> {
         Vec::new()
     }
+    /// 当前上传通道名（"ws" / "xhr"）。UI 必须把它显示出来，
+    /// 降级的数据口径不同，不能默认用户看不出来。
+    fn upload_mode(&self) -> &'static str {
+        "ws"
+    }
 }
 
 /// 传输层观测到的事件。
@@ -62,6 +67,8 @@ pub struct UiFrame {
     pub upload_mbps: Option<f64>,
     pub download_mbps_raw: Option<f64>,
     pub upload_mbps_raw: Option<f64>,
+    /// "ws" 或 "xhr"。降级时页面要显式标注。
+    pub upload_mode: &'static str,
     pub failed: bool,
 }
 
@@ -189,6 +196,7 @@ impl<T: Transport> Driver<T> {
             upload_mbps: s.upload_mbps,
             download_mbps_raw: s.download_mbps_raw,
             upload_mbps_raw: s.upload_mbps_raw,
+            upload_mode: self.transport.upload_mode(),
             failed: s.failed,
         }
     }

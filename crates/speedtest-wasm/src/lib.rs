@@ -27,7 +27,11 @@ thread_local! {
     static DRIVER: RefCell<Option<Driver<WasmTransport>>> = const { RefCell::new(None) };
 }
 
+// `#[serde(default)]` 必须加在结构体上：只在 derive 里写 Default 不会让
+// 反序列化用默认值，缺字段会直接报 `missing field`。
+// 踩过一次：给 PlanInput 加了新字段 `xhr` 后，所有不带该字段的页面全部失败。
 #[derive(serde::Deserialize, Default)]
+#[serde(default)]
 struct PlanInput {
     #[serde(default)]
     ping: bool,
@@ -41,6 +45,8 @@ struct PlanInput {
     dl_seconds: Option<f64>,
     /// 上传时长上限（秒）
     ul_seconds: Option<f64>,
+    /// 强制 XHR 上传（降级路径）；默认 false 表示用 WebSocket
+    xhr: bool,
 }
 
 /// 开始一次测速。`base` 是服务端 origin（如 `http://192.0.2.10:8080`）。
@@ -81,7 +87,11 @@ pub fn start(base: String, plan_json: String, now_ms: f64) -> Result<(), JsValue
         return Err(JsValue::from_str("至少要有 ping/download/upload 之一"));
     }
 
-    let mut driver = Driver::new(settings, plan, WasmTransport::new(base));
+    let mut transport = WasmTransport::new(base);
+    if input.xhr {
+        transport = transport.force_xhr();
+    }
+    let mut driver = Driver::new(settings, plan, transport);
     driver.start(now_ms);
     DRIVER.with(|d| *d.borrow_mut() = Some(driver));
     Ok(())
@@ -138,6 +148,7 @@ fn frame_json(f: &UiFrame) -> String {
         "upload_mbps": f.upload_mbps,
         "download_mbps_raw": f.download_mbps_raw,
         "upload_mbps_raw": f.upload_mbps_raw,
+        "upload_mode": f.upload_mode,
         "failed": f.failed,
     });
     v.to_string()

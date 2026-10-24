@@ -8,6 +8,7 @@ mod config;
 mod garbage;
 mod getip;
 mod limits;
+mod pace;
 mod upload;
 
 use std::net::SocketAddr;
@@ -36,6 +37,9 @@ struct App {
     cfg: Config,
     payload: Payload,
     settlements: Arc<Settlements>,
+    /// 下载/上传的**聚合**限速器（所有连接共享一条时间轴）。
+    dl_limiter: Arc<pace::RateLimiter>,
+    ul_limiter: Arc<pace::RateLimiter>,
     /// WS 连接数闸门：超过 `MAX_WS_CONNECTIONS` 直接 503，绝不无界排队。
     ws_slots: Arc<tokio::sync::Semaphore>,
 }
@@ -48,7 +52,7 @@ struct GarbageQuery {
 
 async fn garbage(State(app): State<App>, Query(q): Query<GarbageQuery>) -> Response {
     let ck = garbage::parse_ck_size(q.ck_size.as_deref());
-    let mut resp = garbage::garbage_response(&app.payload, ck, app.cfg.max_download_mbps);
+    let mut resp = garbage::garbage_response(&app.payload, ck, app.dl_limiter.clone());
     let h = resp.headers_mut();
     h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
     h.insert(
@@ -100,7 +104,7 @@ async fn empty_get() -> Response {
 
 /// 包装：把限速值从 `App` 交给上传模块，避免它依赖整个 `App`。
 async fn empty_post(State(app): State<App>, body: axum::body::Body) -> Response {
-    upload::empty_post(body, app.cfg.max_upload_mbps).await
+    upload::empty_post(body, app.ul_limiter.clone()).await
 }
 
 async fn ws_upload(State(app): State<App>, ws: axum::extract::ws::WebSocketUpgrade) -> Response {
@@ -113,7 +117,7 @@ async fn ws_upload(State(app): State<App>, ws: axum::extract::ws::WebSocketUpgra
         )
             .into_response();
     };
-    upload::ws_upload(ws, app.settlements.clone(), app.cfg.max_upload_mbps, permit)
+    upload::ws_upload(ws, app.settlements.clone(), app.ul_limiter.clone(), permit)
 }
 
 fn router(app: App) -> Router {
@@ -247,6 +251,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg: cfg.clone(),
         payload,
         settlements: Arc::new(Settlements::default()),
+        dl_limiter: Arc::new(pace::RateLimiter::new(cfg.max_download_mbps)),
+        ul_limiter: Arc::new(pace::RateLimiter::new(cfg.max_upload_mbps)),
         ws_slots: Arc::new(tokio::sync::Semaphore::new(limits::MAX_WS_CONNECTIONS)),
     };
 
