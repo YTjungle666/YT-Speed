@@ -33,6 +33,14 @@ pub const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 /// 32 GiB 在 9 Gbit/s 下约 31 s，比任何一轮测试窗口都长。
 pub const MAX_STREAM_BYTES: usize = 32 * 1024 * 1024 * 1024;
 
+/// 单条 `stream=1` 响应的**时间**上限。
+///
+/// 只有字节上限不够：手机测速时锁屏/切后台，页面 JS 被冻结 → 定时器停摆 →
+/// 引擎永远走不到 Done → 不会下发 StopAll，客户端那 10 条流一直读。
+/// 实测一次遗留 30 条 ESTAB、服务端持续 400 Mbit/s 往外写。
+/// 30 s 远大于最长的单阶段窗口（15 s + 1.5 s grace），正常测速碰不到。
+pub const MAX_STREAM_SECS: u64 = 30;
+
 /// WS 上传限速时的预留粒度（客户端帧是 1 MiB；这里只是“先预留再读”的初始猜测，
 /// 收到第一帧后就会用真实帧长替换）。
 pub const WS_FRAME_HINT: usize = 1024 * 1024;

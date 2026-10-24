@@ -62,10 +62,33 @@ self.onmessage = async (ev) => {
     }
     running = true;
 
+    // 看门狗：手机锁屏/切后台时 setTimeout 会被节流到分钟级，tick 不再推进，
+    // 引擎就永远走不到 Done（实测服务端会一直以 400 Mbit/s 往外写）。
+    // 这里用绝对截止时间兜底，节流后第一拍就会命中。
+    const plan = msg.plan || {};
+    const budgetMs = (Number(plan.dl_seconds) || 15) * 1000 + (Number(plan.ul_seconds) || 15) * 1000 + 30000;
+    const deadline = performance.now() + budgetMs;
+
     let drainUntil = 0; // 结束后继续跑一小段，等上传结算到达
+
+    let lastFrame = null;
 
     const loop = () => {
       if (!running) return;
+      if (performance.now() > deadline) {
+        // 先让引擎走中止流程（会下发 StopAll 关掉所有流），再报结果
+        abort(performance.now());
+        const aborted = tick(performance.now());
+        if (aborted !== 'null') lastFrame = JSON.parse(aborted);
+        stopLoop();
+        self.postMessage({
+          type: 'done',
+          frame: lastFrame || { phase: 'Aborted', failed: true },
+          samples: JSON.parse(samples_json()),
+          error: '看门狗超时：页面可能被切到后台，已中止',
+        });
+        return;
+      }
       const raw = tick(performance.now());
       if (raw !== 'null') {
         const frame = JSON.parse(raw);
@@ -90,6 +113,7 @@ self.onmessage = async (ev) => {
           timer = setTimeout(loop, 50);
           return;
         }
+        lastFrame = frame;
         self.postMessage({ type: 'frame', frame });
       }
       // 100 ms 心跳；core 的 200 ms 节拍由 wasm 内部节流
@@ -98,5 +122,9 @@ self.onmessage = async (ev) => {
     loop();
   } else if (msg.cmd === 'abort') {
     abort(performance.now());
+  } else if (msg.cmd === 'stop') {
+    // 页面隐藏/关闭时的兜底：主线程发了 stop 就立刻关流，别等引擎自己走到 Done
+    abort(performance.now());
+    stopLoop();
   }
 };

@@ -133,6 +133,13 @@ $('ul').onclick = () => run({ ping: false, download: false, upload: true });
 $('ulxhr').onclick = () => run({ ping: false, download: false, upload: true, xhr: true });
 $('abort').onclick = () => worker.postMessage({ cmd: 'abort' });
 
+// 页面切到后台/锁屏时立刻掐流：手机锁屏会让定时器停摆，引擎走不到 Done，
+// 那 10 条 stream=1 的下载流会一直读下去（实测服务端持续 400 Mbit/s 往外写）。
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) worker.postMessage({ cmd: 'stop' });
+});
+window.addEventListener('pagehide', () => worker.postMessage({ cmd: 'stop' }));
+
 // 自动化入口：?auto=1 直接开跑完整测试
 if (new URLSearchParams(location.search).get('auto')) {
   setTimeout(() => run({ ping: true, download: true, upload: true }), 200);

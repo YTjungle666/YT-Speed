@@ -69,11 +69,22 @@ pub fn garbage_response(
     };
     let block = payload.block().clone();
 
+    // `stream=1` 还要有时间上限：客户端被冻结（手机锁屏）时不会断开，
+    // 只靠 32 GiB 字节上限要发 30 s 以上，服务端会一直往外写。
+    let deadline = if endless {
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(crate::limits::MAX_STREAM_SECS))
+    } else {
+        None
+    };
+
     let body_stream = stream::unfold((0usize, 0usize), move |(offset, sent)| {
         let block = block.clone();
         let limiter = limiter.clone();
         async move {
             if sent >= total {
+                return None;
+            }
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
                 return None;
             }
             let take = SLICE_BYTES.min(total - sent);
