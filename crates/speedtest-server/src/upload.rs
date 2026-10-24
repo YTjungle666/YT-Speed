@@ -176,7 +176,13 @@ async fn handle_ws(
         return;
     }
 
-    let started = Instant::now();
+    // 结算窗口用「首字节 → 末字节」，而不是整段连接时长：
+    // 连接建立、token 下发、客户端拿到 token 前那段空转都是固定开销，摊进速率里
+    // 会让 1 Gbps / 6 s 的窗口少 1.3%（实测 1057 vs 1071）。测速应该只量传输本身。
+    // 残留偏差是“最后一个帧的传输时间没算进去”，1 Gbps 下约 8 ms / 17 s ≈ 0.05%。
+    let opened = Instant::now();
+    let mut first_byte: Option<Instant> = None;
+    let mut last_byte = opened;
     let mut bytes = 0u64;
     // 限速要“先预留再读”，不能“先读再睡”：
     // 先读的话，每次都在等数据到达（客户端被上一轮的睡眠卡住）之后再睡满一个窗口，
@@ -195,6 +201,11 @@ async fn handle_ws(
         };
         match msg {
             Ok(Message::Binary(b)) => {
+                let now = Instant::now();
+                if first_byte.is_none() {
+                    first_byte = Some(now);
+                }
+                last_byte = now;
                 let n = b.len() as u64;
                 bytes += n;
                 if limiter.is_limited() {
@@ -209,7 +220,16 @@ async fn handle_ws(
             }
         }
     }
-    let ms = started.elapsed().as_secs_f64() * 1000.0;
+    let span = match first_byte {
+        Some(f) => last_byte.saturating_duration_since(f),
+        None => Duration::ZERO,
+    };
+    let ms = if span > Duration::from_millis(1) {
+        span.as_secs_f64() * 1000.0
+    } else {
+        // 只有一帧（或没有）：退化成整段连接时长，避免除出天文数字
+        opened.elapsed().as_secs_f64() * 1000.0
+    };
     let gbps = if ms > 0.0 {
         bytes as f64 * 8.0 / (ms / 1000.0) / 1e9
     } else {
