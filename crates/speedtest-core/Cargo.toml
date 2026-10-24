@@ -1,0 +1,11 @@
+[package]
+name = "speedtest-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "LibreSpeed 的纯逻辑测速状态机：无 async、无 IO、可在 wasm32 与 native 上运行"
+
+[dependencies]
+
+[dev-dependencies]
