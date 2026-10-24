@@ -349,7 +349,7 @@ fn start_is_idempotent_and_stopall_on_finish() {
         first,
         vec![Command::StartStreams {
             dir: Dir::Down,
-            count: 6,
+            count: 10,
             stagger_ms: 100.0
         }]
     );

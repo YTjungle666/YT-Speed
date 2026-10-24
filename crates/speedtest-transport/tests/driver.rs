@@ -50,7 +50,7 @@ fn start_issues_ping_then_streams() {
     // ping 跑完立刻开下载流：8 路、错开 300 ms
     assert_eq!(
         *d.transport().actions.last().unwrap(),
-        Action::Start(Dir::Down, 6, 100.0)
+        Action::Start(Dir::Down, 10, 100.0)
     );
     assert_eq!(d.snapshot().phase, Phase::Download);
 }
@@ -62,7 +62,7 @@ fn duplicate_start_is_ignored() {
     assert!(!d.start(10.0), "第二次 start 应返回 false");
     assert_eq!(
         d.transport().actions,
-        vec![Action::Start(Dir::Down, 6, 100.0)]
+        vec![Action::Start(Dir::Down, 10, 100.0)]
     );
 }
 
