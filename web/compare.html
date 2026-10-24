@@ -143,8 +143,13 @@ async function runAll() {
   let rows = load();
   while (rows.length < RUNS) {
     const r = rows.length + 1;
+    // 子测试之间留空档：上一项的长连接要真正关掉，下一项才拿得到连接槽位。
+    // 不留空档时出现过 5.0 / 6.0 Gbit/s 的掉队轮次（其余轮 8.0~9.0）。
+    const idle = () => new Promise((r) => setTimeout(r, 800));
+    await idle();
     $('stage').textContent = `第 ${r}/${RUNS} 轮：legacy...`;
     const l = await withTimeout(runLegacy(), 45000);
+    await idle();
     $('stage').textContent = `第 ${r}/${RUNS} 轮：新引擎...`;
     const n = await withTimeout(runMine(), 45000);
     // 注意：legacy 的 dlStatus/ulStatus 自带 ×1.06 补偿，所以口径对照要用

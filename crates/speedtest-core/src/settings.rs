@@ -44,7 +44,9 @@ impl Default for Settings {
             // 更多路数反而更慢（10 路 7350、12 路 6681），因为浏览器每路都要独立调度。
             dl_streams: 6,
             ul_streams: 1,
-            stream_stagger_ms: 300.0,
+            // 100 ms：grace 1.5 s 结束时 6 条流都已完成 slow start（原来 300 ms 时
+            // 第 6 条流正好在计时窗口起点才起跑，前 1/6 窗口是 5 条流在跑）。
+            stream_stagger_ms: 100.0,
         }
     }
 }
