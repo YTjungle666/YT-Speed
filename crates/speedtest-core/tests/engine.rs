@@ -246,6 +246,15 @@ fn late_settlement_overrides_finished_upload() {
     );
     let expected = 100_000_000.0 * 8.0 * 1.06 / 8.0 / 1_000_000.0;
     assert!((settled - expected).abs() < 0.01, "{settled} vs {expected}");
+
+    // 实测值不乘 1.06，两者比值应正好是补偿系数
+    let settled_raw = e.snapshot().upload_mbps_raw.expect("应有实测值");
+    let expected_raw = 100_000_000.0 * 8.0 / 8.0 / 1_000_000.0;
+    assert!(
+        (settled_raw - expected_raw).abs() < 0.01,
+        "{settled_raw} vs {expected_raw}"
+    );
+    assert!((settled / settled_raw - 1.06).abs() < 1e-9);
 }
 
 #[test]

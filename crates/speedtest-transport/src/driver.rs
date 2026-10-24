@@ -49,7 +49,10 @@ pub const MAX_SIGNALS: usize = 32;
 #[derive(Clone, Debug, PartialEq)]
 pub struct UiFrame {
     pub phase: Phase,
+    /// 上游口径（含 ×1.06）。
     pub status: Option<String>,
+    /// 实测值（不含 ×1.06），页面要两个都显示。
+    pub status_raw: Option<String>,
     pub progress: f64,
     pub bytes: u64,
     pub elapsed_ms: f64,
@@ -57,6 +60,8 @@ pub struct UiFrame {
     pub jitter: Option<String>,
     pub download_mbps: Option<f64>,
     pub upload_mbps: Option<f64>,
+    pub download_mbps_raw: Option<f64>,
+    pub upload_mbps_raw: Option<f64>,
     pub failed: bool,
 }
 
@@ -174,6 +179,7 @@ impl<T: Transport> Driver<T> {
         UiFrame {
             phase: s.phase,
             status: s.status.clone(),
+            status_raw: s.status_raw.clone(),
             progress: s.progress,
             bytes: s.bytes,
             elapsed_ms: s.elapsed_ms,
@@ -181,6 +187,8 @@ impl<T: Transport> Driver<T> {
             jitter: s.jitter_status.clone(),
             download_mbps: s.download_mbps,
             upload_mbps: s.upload_mbps,
+            download_mbps_raw: s.download_mbps_raw,
+            upload_mbps_raw: s.upload_mbps_raw,
             failed: s.failed,
         }
     }

@@ -128,6 +128,7 @@ fn frame_json(f: &UiFrame) -> String {
     let v = serde_json::json!({
         "phase": format!("{:?}", f.phase),
         "status": f.status,
+        "status_raw": f.status_raw,
         "progress": f.progress,
         "bytes": f.bytes,
         "elapsed_ms": f.elapsed_ms,
@@ -135,6 +136,8 @@ fn frame_json(f: &UiFrame) -> String {
         "jitter": f.jitter,
         "download_mbps": f.download_mbps,
         "upload_mbps": f.upload_mbps,
+        "download_mbps_raw": f.download_mbps_raw,
+        "upload_mbps_raw": f.upload_mbps_raw,
         "failed": f.failed,
     });
     v.to_string()

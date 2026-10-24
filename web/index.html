@@ -18,7 +18,8 @@
   #bar > i { display: block; height: 100%; width: 0; background: #2f81f7; transition: width .1s linear; }
 </style>
 <h1>P3 引擎验证</h1>
-<p class="hint">引擎跑在 Web Worker 里；这个页面只负责收快照。仅用于阶段验证，正式 UI 是 P4 的 Leptos。</p>
+<p class="hint">引擎跑在 Web Worker 里；这个页面只负责收快照。仅用于阶段验证，正式 UI 是 P4 的 Leptos。<br>
+「实测」= 收到字节 / 耗时，不做任何补偿；「上游口径」= 乘 1.06 的传输开销补偿，只为与 LibreSpeed 的数字可比。两个都摆出来，不替谁圆场。</p>
 
 <button id="run">开始（ping → 下载 → 上传）</button>
 <button id="dl" disabled>只测下载</button>
@@ -28,7 +29,8 @@
 <div id="bar"><i></i></div>
 <div id="out">
   <div class="row"><span class="k">阶段</span><span id="phase">—</span></div>
-  <div class="row"><span class="k">当前速率</span><span class="big" id="status">—</span></div>
+  <div class="row"><span class="k">当前速率（实测）</span><span class="big" id="status">—</span></div>
+  <div class="row"><span class="k">上游口径（×1.06）</span><span id="status_raw">—</span></div>
   <div class="row"><span class="k">进度</span><span id="progress">—</span></div>
   <div class="row"><span class="k">字节</span><span id="bytes">—</span></div>
   <div class="row"><span class="k">ping / jitter</span><span id="ping">—</span></div>
@@ -55,7 +57,9 @@ worker.onmessage = (ev) => {
     frames++;
     const f = msg.frame;
     $('phase').textContent = f.phase;
-    $('status').textContent = f.status ? f.status + ' Mbit/s' : '—';
+    // 实测值在前，上游口径在后：页面上第一眼看到的必须是真的字节速率
+    $('status').textContent = f.status_raw ? f.status_raw + ' Mbit/s' : '—';
+    $('status_raw').textContent = f.status ? f.status + ' Mbit/s' : '—';
     $('progress').textContent = (f.progress * 100).toFixed(0) + '%';
     $('bar').firstElementChild.style.width = (f.progress * 100).toFixed(1) + '%';
     $('bytes').textContent = (f.bytes / 1048576).toFixed(1) + ' MiB';
@@ -63,19 +67,25 @@ worker.onmessage = (ev) => {
   } else if (msg.type === 'done') {
     const f = msg.frame;
     const ms = performance.now() - started;
-    $('dlres').textContent = f.download_mbps != null ? f.download_mbps.toFixed(2) + ' Mbit/s' : '—';
-    $('ulres').textContent = f.upload_mbps != null ? f.upload_mbps.toFixed(2) + ' Mbit/s' : '—';
+    const both = (raw, comp) =>
+      raw == null ? '—' : `${raw.toFixed(2)} Mbit/s（上游口径 ${comp.toFixed(2)}）`;
+    $('dlres').textContent = both(f.download_mbps_raw, f.download_mbps);
+    $('ulres').textContent = both(f.upload_mbps_raw, f.upload_mbps);
     $('npts').textContent = msg.samples.length + ' 点';
     $('phase').textContent = f.phase;
-    const dl = f.download_mbps != null ? f.download_mbps.toFixed(2) : '—';
-    const ul = f.upload_mbps != null ? f.upload_mbps.toFixed(2) : '—';
+    const dl = f.download_mbps_raw != null
+      ? `${f.download_mbps_raw.toFixed(2)}（实测）/ ${f.download_mbps.toFixed(2)}（×1.06）` : '—';
+    const ul = f.upload_mbps_raw != null
+      ? `${f.upload_mbps_raw.toFixed(2)}（实测）/ ${f.upload_mbps.toFixed(2)}（×1.06）` : '—';
     log(`完成：${(ms / 1000).toFixed(2)} s，${frames} 帧，phase=${f.phase}，failed=${f.failed}，` +
-        `ping=${f.ping} jitter=${f.jitter}，下载=${dl} 上传=${ul}（Mbit/s），采样=${msg.samples.length}`);
+        `ping=${f.ping} jitter=${f.jitter}，下载=${dl} 上传=${ul} Mbit/s，采样=${msg.samples.length}`);
     // 给自动化脚本读的汇总
     document.title = `done ${f.download_mbps?.toFixed(2)} ${f.upload_mbps?.toFixed(2)} ${msg.samples.length}`;
     window.__result = {
       download_mbps: f.download_mbps,
       upload_mbps: f.upload_mbps,
+      download_mbps_raw: f.download_mbps_raw,
+      upload_mbps_raw: f.upload_mbps_raw,
       ping: f.ping,
       jitter: f.jitter,
       failed: f.failed,

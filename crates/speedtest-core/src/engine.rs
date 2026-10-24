@@ -82,15 +82,21 @@ pub enum Event {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub phase: Phase,
+    /// 当前速率（上游口径：含 `overheadCompensationFactor`，默认 ×1.06）。
     pub status: Option<String>,
+    /// 当前速率的**实测值**（字节/时间，不做任何补偿）。给“真实数字”用。
+    pub status_raw: Option<String>,
     pub progress: f64,
     pub bytes: u64,
     pub elapsed_ms: f64,
     pub ping_status: Option<String>,
     pub jitter_status: Option<String>,
-    /// 最终结果（阶段结束时定稿），单位 Mbit/s。
+    /// 最终结果（阶段结束时定稿），单位 Mbit/s，上游口径（含 ×1.06）。
     pub download_mbps: Option<f64>,
     pub upload_mbps: Option<f64>,
+    /// 同上的**实测值**（不含开销补偿）。
+    pub download_mbps_raw: Option<f64>,
+    pub upload_mbps_raw: Option<f64>,
     /// 任一阶段因流失败而结束。
     pub failed: bool,
 }
@@ -104,7 +110,10 @@ struct Transfer {
     total: u64,
     failed: bool,
     elapsed_ms: f64,
+    /// 上游口径（含 ×1.06）。
     status: Option<f64>,
+    /// 实测值（不含 ×1.06），与 `status` 同一拍更新。
+    status_raw: Option<f64>,
 }
 
 impl Transfer {
@@ -118,6 +127,7 @@ impl Transfer {
             failed: false,
             elapsed_ms: 0.0,
             status: None,
+            status_raw: None,
         }
     }
 }
@@ -216,6 +226,7 @@ impl Engine {
                 // 浏览器实测：客户端按“已 send”计数比服务端高 6.6%，不能直接展示。
                 if self.phase == Phase::Done && ms > 0.0 {
                     self.snapshot.upload_mbps = Some(self.conv.mbps(bytes as f64, ms / 1000.0));
+                    self.snapshot.upload_mbps_raw = Some(self.raw_up(bytes as f64, ms / 1000.0));
                 }
             }
             Event::Tick => {
@@ -293,7 +304,14 @@ impl Engine {
                 tr.bonus_ms += if bonus > 400.0 { 400.0 } else { bonus };
             }
             tr.elapsed_ms = t;
-            tr.status = Some(self.conv.mbps(tr.total as f64, t / 1000.0));
+            let divisor = self.conv.divisor;
+            let total = tr.total as f64;
+            tr.status = Some(self.conv.mbps(total, t / 1000.0));
+            tr.status_raw = Some(if t > 0.0 {
+                total / (t / 1000.0) * 8.0 / divisor
+            } else {
+                0.0
+            });
             t
         };
 
@@ -307,26 +325,38 @@ impl Engine {
         cmds
     }
 
+    /// 实测速率（不含开销补偿）。与 `Conv::mbps` 的区别只有那个 1.06，
+    /// 乘除顺序也照抄上游，避免末位差异。
+    fn raw_up(&self, bytes: f64, secs: f64) -> f64 {
+        if secs <= 0.0 {
+            return 0.0;
+        }
+        bytes / secs * 8.0 / self.conv.divisor
+    }
+
     /// 结束当前传输阶段并决定下一步。
     fn finish_transfer(&mut self, now_ms: f64) -> Vec<Command> {
         let mut cmds = vec![Command::StopAll];
         let tr = self.transfer.take().expect("传输阶段必有累加器");
 
         // 上传以服务端结算为准（客户端 bufferedAmount 尚未离机的部分不算数）
-        let value = match (tr.dir, self.settled) {
-            (Dir::Up, Some((bytes, ms))) if ms > 0.0 => {
-                Some(self.conv.mbps(bytes as f64, ms / 1000.0))
-            }
-            _ => tr.status,
+        let (value, value_raw) = match (tr.dir, self.settled) {
+            (Dir::Up, Some((bytes, ms))) if ms > 0.0 => (
+                Some(self.conv.mbps(bytes as f64, ms / 1000.0)),
+                Some(self.raw_up(bytes as f64, ms / 1000.0)),
+            ),
+            _ => (tr.status, tr.status_raw),
         };
 
         match tr.dir {
             Dir::Down => {
                 self.snapshot.download_mbps = value;
+                self.snapshot.download_mbps_raw = value_raw;
                 self.snapshot.failed |= tr.failed;
             }
             Dir::Up => {
                 self.snapshot.upload_mbps = value;
+                self.snapshot.upload_mbps_raw = value_raw;
                 self.snapshot.failed |= tr.failed;
             }
         }
@@ -363,6 +393,7 @@ impl Engine {
             self.snapshot.bytes = tr.total;
             self.snapshot.elapsed_ms = tr.elapsed_ms;
             self.snapshot.status = tr.status.map(to_fixed2);
+            self.snapshot.status_raw = tr.status_raw.map(to_fixed2);
             let max_secs = match tr.dir {
                 Dir::Down => self.settings.dl_max_secs,
                 Dir::Up => self.settings.ul_max_secs,
