@@ -108,7 +108,10 @@ impl WasmTransport {
             let delay = (stagger_ms * i as f64) as i32;
             let ctrl = AbortController::new().expect("创建 AbortController 失败");
             self.controllers.push(ctrl.clone());
-            let url = format!("{}/backend/garbage?ckSize=1024", self.base);
+            // stream=1：服务端不发完就断开，一条请求跑满整个窗口。
+            // 用 ckSize=1024 时 1 GiB 在 9 Gbit/s 下约 1 s 就发完，6 条流会同时重新请求，
+            // 那个同步空档正是单轮下载忽高忽低（4.3~9.6 Gbit/s）的来源之一。
+            let url = format!("{}/backend/garbage?ckSize=1024&stream=1", self.base);
             let meters = self.meters.clone();
             spawn_local(async move {
                 if delay > 0 {

@@ -29,6 +29,10 @@ pub const MAX_SETTLEMENTS: usize = 1024;
 /// 资产是流式发送的（不整体读进内存），这个值只用来挡“误把镜像放进 web/”这类事故。
 pub const MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
+/// `stream=1` 单条响应最多发多少（32 GiB）：客户端消失时不会有一条响应无限期挂着。
+/// 32 GiB 在 9 Gbit/s 下约 31 s，比任何一轮测试窗口都长。
+pub const MAX_STREAM_BYTES: usize = 32 * 1024 * 1024 * 1024;
+
 /// WS 上传限速时的预留粒度（客户端帧是 1 MiB；这里只是“先预留再读”的初始猜测，
 /// 收到第一帧后就会用真实帧长替换）。
 pub const WS_FRAME_HINT: usize = 1024 * 1024;

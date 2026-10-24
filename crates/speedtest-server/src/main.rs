@@ -48,11 +48,14 @@ struct App {
 struct GarbageQuery {
     #[serde(rename = "ckSize")]
     ck_size: Option<String>,
+    /// `stream=1`：不给 Content-Length，一直发到客户端断开（省掉请求间空档）。
+    stream: Option<String>,
 }
 
 async fn garbage(State(app): State<App>, Query(q): Query<GarbageQuery>) -> Response {
     let ck = garbage::parse_ck_size(q.ck_size.as_deref());
-    let mut resp = garbage::garbage_response(&app.payload, ck, app.dl_limiter.clone());
+    let endless = matches!(q.stream.as_deref(), Some("1") | Some("true"));
+    let mut resp = garbage::garbage_response(&app.payload, ck, endless, app.dl_limiter.clone());
     let h = resp.headers_mut();
     h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
     h.insert(

@@ -55,9 +55,18 @@ pub fn parse_ck_size(raw: Option<&str>) -> u32 {
 pub fn garbage_response(
     payload: &Payload,
     ck_size: u32,
+    endless: bool,
     limiter: std::sync::Arc<crate::pace::RateLimiter>,
 ) -> Response {
-    let total = ck_size as usize * SLICE_BYTES;
+    // `stream=1`：不给 Content-Length，一直发到客户端断开为止。
+    // 测速客户端每条流只发一次请求就能跑满整个测试窗口，省掉“请求结束→再发一次”
+    // 的同步空档（1 GiB 在 9 Gbit/s 下约 1 s 就发完，6 条流会同时空一下）。
+    // 上限 32 GiB 是兜底：客户端异常消失时不会有一条响应无限期挂着。
+    let total = if endless {
+        crate::limits::MAX_STREAM_BYTES
+    } else {
+        ck_size as usize * SLICE_BYTES
+    };
     let block = payload.block().clone();
 
     let body_stream = stream::unfold((0usize, 0usize), move |(offset, sent)| {
@@ -83,7 +92,7 @@ pub fn garbage_response(
         }
     });
 
-    Response::builder()
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(
@@ -91,10 +100,14 @@ pub fn garbage_response(
             "attachment; filename=random.bin",
         )
         .header(header::CACHE_CONTROL, "no-store, no-cache, must-revalidate")
-        .header(header::CONTENT_LENGTH, total.to_string())
         // 随机数据不可压缩，明确禁掉，避免中间代理浪费时间
         .header("x-content-type-options", "nosniff")
-        .header("content-encoding", "identity")
+        .header("content-encoding", "identity");
+    if !endless {
+        // endless 模式不能给 Content-Length，否则客户端会等满 32 GiB
+        builder = builder.header(header::CONTENT_LENGTH, total.to_string());
+    }
+    builder
         .body(Body::from_stream(body_stream))
         .expect("响应构造失败")
         .into_response()
