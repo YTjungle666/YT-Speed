@@ -13,7 +13,7 @@
 
     apk add openssh logrotate
     install -m755 yt-speed /usr/local/bin/yt-speed
-    mkdir -p /srv/yt-speed/web        # 放 web/app、web/pkg、engine.worker.js、index.html
+    mkdir -p /srv/yt-speed/web        # 放 web/ 根下的 index.html + 哈希 js/wasm/css、pkg/、engine.worker.js
     install -m755 yt-speed.openrc /etc/init.d/yt-speed
     rc-update add yt-speed default
     rc-service yt-speed start

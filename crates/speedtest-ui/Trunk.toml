@@ -1,8 +1,9 @@
 [build]
 target = "index.html"
 dist = "dist"
-# 产物部署到 web/app/ 下，所以资源要用 /app/ 前缀（trunk 默认 "/" 会让 JS 404）
-public_url = "/app/"
+# 正式页面就挂在站点根：界面地址是 http://host/ ，不是 /app/index.html。
+# 所以资源必须用根路径前缀，否则 JS/CSS 404。
+public_url = "/"
 
 [serve]
 port = 8091

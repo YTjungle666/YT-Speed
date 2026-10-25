@@ -216,12 +216,12 @@ async fn healthz(State(app): State<App>) -> Response {
     ([(header::CACHE_CONTROL, "no-store")], axum::Json(body)).into_response()
 }
 
-/// 根路径直接跳正式界面。
-///
-/// 之前 `/` 指向 `web/index.html`（P3 阶段用来验证引擎的裸页面），部署后
-/// 打开域名先看到的是「P3 引擎验证」而不是产品界面——入口本来就是错的。
-async fn index() -> Response {
-    axum::response::Redirect::to("/app/index.html").into_response()
+/// 根路径就是界面本身（站点根挂 UI），不做跳转。
+async fn index(State(app): State<App>) -> Response {
+    match app.cfg.web_dir.clone() {
+        Some(root) => assets::serve(root, "index.html".to_string()).await,
+        None => (StatusCode::NOT_FOUND, "static assets disabled").into_response(),
+    }
 }
 
 async fn static_file(State(app): State<App>, UrlPath(rel): UrlPath<String>) -> Response {
@@ -304,8 +304,9 @@ async fn fallback(
     if method != Method::GET {
         return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed").into_response();
     }
+    // 前端路由（/settings、/history 之类）刷新时没有扩展名，交给 index.html
     if PathBuf::from(&path).extension().is_none() {
-        return axum::response::Redirect::to("/app/index.html").into_response();
+        return index(State(app)).await;
     }
     match app.cfg.web_dir.clone() {
         Some(root) => assets::serve(root, path).await,

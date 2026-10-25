@@ -1,9 +1,9 @@
 #!/bin/sh
-# 构建 Leptos UI 并部署到 web/app/。
+# 构建 Leptos UI 并部署到 web/ 根。
 #
-# 为什么部署到 web/app/ 而不是 web/ 根：web/ 根下还有验证页（index.html）、
-# legacy 对照页、engine.worker.js 和 speedtest_wasm 的 pkg/。trunk 会按自己的
-# 规则覆盖 dist，把产物放进子目录最省事，切主站的时候再翻。
+# 界面地址就是站点根（http://host/），所以 index.html、哈希命名的 js/wasm/css
+# 都放在 web/ 根下；engine.worker.js 和 pkg/ 本来就在根，互不冲突。
+# 开发期的验证页、legacy 对照页已经删除，根目录不再有多套入口。
 #
 # 用法：scripts/build-ui.sh
 set -eu
@@ -32,10 +32,10 @@ fi
 
 # 只清自己生成的文件，避免误删别的页面
 trunk build --release
-mkdir -p "$repo/web/app"
-find "$repo/web/app" -maxdepth 1 -type f -name 'speedtest-ui-*' -delete
-find "$repo/web/app" -maxdepth 1 -type f -name 'styles-*.css' -delete
-cp dist/index.html dist/*.js dist/*.wasm dist/*.css "$repo/web/app/"
+# 只清自己生成的带哈希文件，别误删 engine.worker.js / pkg/ / README
+find "$repo/web" -maxdepth 1 -type f -name 'speedtest-ui-*' -delete
+find "$repo/web" -maxdepth 1 -type f -name 'styles-*.css' -delete
+cp dist/index.html dist/*.js dist/*.wasm dist/*.css "$repo/web/"
 
-size=$(find "$repo/web/app" -maxdepth 1 -name "*_bg.wasm" -printf "%s\n" | head -1)
-echo "已部署到 web/app/（wasm ${size} 字节）"
+size=$(find "$repo/web" -maxdepth 1 -name "*_bg.wasm" -printf "%s\n" | head -1)
+echo "已部署到 web/（wasm ${size} 字节）"
