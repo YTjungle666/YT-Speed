@@ -356,7 +356,6 @@ impl EngineSession {
         self.worker.set_value(Some(worker));
     }
 
-
     /// 页面隐藏/卸载时立刻掐断流。
     ///
     /// 手机锁屏或切后台时，页面 JS 会被冻结、`setTimeout` 被节流到分钟级，
@@ -364,7 +363,9 @@ impl EngineSession {
     /// 实测遗留 30 条 ESTAB、服务端持续 400 Mbit/s 往外写，手机流量和电都在烧。
     /// 这里在页面不可见时直接发 stop（worker 收到就 abort 所有流）。
     fn install_page_hooks(&self) {
-        let Some(worker) = self.worker.get_value() else { return };
+        let Some(worker) = self.worker.get_value() else {
+            return;
+        };
         let running = self.running;
         let error = self.error;
 
@@ -389,8 +390,11 @@ impl EngineSession {
         });
 
         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-            doc.add_event_listener_with_callback("visibilitychange", on_visibility.as_ref().unchecked_ref())
-                .ok();
+            doc.add_event_listener_with_callback(
+                "visibilitychange",
+                on_visibility.as_ref().unchecked_ref(),
+            )
+            .ok();
         }
         if let Some(win) = web_sys::window() {
             win.add_event_listener_with_callback("pagehide", on_hide.as_ref().unchecked_ref())

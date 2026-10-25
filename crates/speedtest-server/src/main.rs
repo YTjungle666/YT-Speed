@@ -80,10 +80,7 @@ impl App {
         let ttl = std::time::Duration::from_secs(limits::STOP_SESSION_TTL_SECS);
         map.retain(|_, e| e.at.elapsed() < ttl);
         while map.len() >= limits::MAX_STOP_SESSIONS {
-            let oldest = map
-                .iter()
-                .min_by_key(|(_, e)| e.at)
-                .map(|(k, _)| *k);
+            let oldest = map.iter().min_by_key(|(_, e)| e.at).map(|(k, _)| *k);
             match oldest {
                 Some(k) => {
                     map.remove(&k);
@@ -104,7 +101,7 @@ impl App {
     /// 客户端主动结束一个会话：把它的所有流置为取消。
     fn stop_session(&self, sid: u64) -> usize {
         let mut map = self.stops.lock().unwrap();
-        let n = match map.remove(&sid) {
+        match map.remove(&sid) {
             Some(e) => {
                 for f in &e.flags {
                     f.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -112,8 +109,7 @@ impl App {
                 e.flags.len()
             }
             None => 0,
-        };
-        n
+        }
     }
 }
 

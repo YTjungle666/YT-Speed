@@ -6,5 +6,8 @@ node_modules/
 # wasm-bindgen 产物（由 cargo + wasm-bindgen 生成，不入库）
 web/pkg/
 
-# Leptos UI 构建产物（scripts/build-ui.sh 生成）
-web/app/
+# Leptos UI 构建产物（scripts/build-ui.sh 生成，不入库）：
+# 界面挂在站点根，所以这些文件直接在 web/ 下，而不是 web/app/
+web/index.html
+web/speedtest-ui-*
+web/styles-*.css

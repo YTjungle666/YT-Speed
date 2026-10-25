@@ -1,5 +1,7 @@
 # YT-Speed
 
+[![ci](https://github.com/YTjungle666/YT-Speed/actions/workflows/ci.yml/badge.svg)](https://github.com/YTjungle666/YT-Speed/actions/workflows/ci.yml)
+
 家庭内网测速服务（Leptos/WASM 前端 + Rust 测量引擎 + 原生命令行），
 设计取向上参考 LibreSpeed 但为全栈 Rust 重写。设计与验收标准见
 `~/Plan/yt-speed/PLAN.md`（本仓不放计划；部署见 `deploy/`）。
@@ -64,3 +66,8 @@ python3 -m http.server 8092
 | Chromium 156 | 通过：桌面与 390×844 渲染、无横向溢出、设置输入、阶段配色、历史 25→20 截断、复制成功/降级、无控制台错误 |
 | Firefox | 未验证：本机未安装 Firefox |
 | WebKit | 未验证 |
+
+## 许可
+
+PolyForm Noncommercial License 1.0.0 —— 个人非商业使用免费，商业用途需另行授权。
+全文见 [LICENSE](LICENSE)。

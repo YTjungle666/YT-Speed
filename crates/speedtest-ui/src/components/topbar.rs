@@ -25,7 +25,7 @@ pub fn TopBar(
         <header class="topbar">
             <div class="brand">
                 <span class="dot"></span>
-                "speedtest-rs"
+                "YT-Speed"
                 <span class="ver">"v0.1.0"</span>
             </div>
             <nav class="tabs" aria-label="页面导航">

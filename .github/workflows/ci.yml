@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # -D warnings 也来自 env；这里显式再写一次，免得有人改 env 块时把意图改没
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  # 部署目标是 Alpine（musl），glibc 的产物在那边 exec 直接 ENOENT。
+  # 所以这里必须编 musl，并且按「没有动态库依赖」判定，而不是看 `file` 里的字面：
+  # file 把这种产物叫 static-pie，里面并没有 "statically linked" 这个词。
+  build-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --target x86_64-unknown-linux-musl -p speedtest-server
+      - name: no dynamic libraries
+        run: |
+          set -eu
+          f=target/x86_64-unknown-linux-musl/release/yt-speed
+          file "$f"
+          if readelf -d "$f" 2>/dev/null | grep -q NEEDED; then
+            echo "::error::yt-speed links against a shared library"
+            readelf -d "$f" | grep NEEDED
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yt-speed-linux-musl
+          path: target/x86_64-unknown-linux-musl/release/yt-speed
+
+  # 前端是两个 wasm 目标：测量引擎（speedtest-wasm）和 UI（speedtest-ui）。
+  # 这一步只证明它们能在 wasm32 下编译通过；打包仍走本地 scripts/build-ui.sh（trunk + wasm-opt）。
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --target wasm32-unknown-unknown -p speedtest-wasm -p speedtest-ui
