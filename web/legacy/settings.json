@@ -1,9 +1,0 @@
-{
-  "telemetry_level": "off",
-  "test_order": "I_D_U",
-  "time_dl_max": 5,
-  "time_ul_max": 3,
-  "time_dlGraceTime": 0,
-  "time_ulGraceTime": 0,
-  "time_auto": false
-}

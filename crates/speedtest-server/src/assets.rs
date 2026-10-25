@@ -98,36 +98,6 @@ pub async fn serve(root: PathBuf, rel: String) -> Response {
 }
 
 /// 入口：没有 `index.html` 时给一个自带说明的占位页，避免部署时一片空白。
-pub async fn index(root: Option<PathBuf>) -> Response {
-    if let Some(root) = root {
-        let p = root.join("index.html");
-        if let Ok(bytes) = tokio::fs::read(&p).await {
-            return Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-                .header(header::CACHE_CONTROL, "no-cache")
-                .body(Body::from(bytes))
-                .expect("响应构造失败")
-                .into_response();
-        }
-    }
-    let html = concat!(
-        "<!doctype html><meta charset=utf-8><title>speedtestd</title>",
-        "<h1>speedtestd 正在运行</h1>",
-        "<p>还没有前端资产。P4 会把 Leptos 产物放进 <code>web/</code>。</p>",
-        "<p>可用的后端端点：<code>/backend/garbage?ckSize=64</code>、",
-        "<code>/backend/empty</code>、<code>/backend/getIP</code>、",
-        "<code>/backend/ws-upload</code>、<code>/healthz</code></p>"
-    );
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from(html))
-        .expect("响应构造失败")
-        .into_response()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

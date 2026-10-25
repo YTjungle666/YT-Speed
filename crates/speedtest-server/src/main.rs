@@ -216,8 +216,12 @@ async fn healthz(State(app): State<App>) -> Response {
     ([(header::CACHE_CONTROL, "no-store")], axum::Json(body)).into_response()
 }
 
-async fn index(State(app): State<App>) -> Response {
-    assets::index(app.cfg.web_dir.clone()).await
+/// 根路径直接跳正式界面。
+///
+/// 之前 `/` 指向 `web/index.html`（P3 阶段用来验证引擎的裸页面），部署后
+/// 打开域名先看到的是「P3 引擎验证」而不是产品界面——入口本来就是错的。
+async fn index() -> Response {
+    axum::response::Redirect::to("/app/index.html").into_response()
 }
 
 async fn static_file(State(app): State<App>, UrlPath(rel): UrlPath<String>) -> Response {
@@ -270,8 +274,6 @@ fn router(app: App) -> Router {
         .route("/backend/getIP", get(getip::get_ip))
         .route("/backend/getIP.php", get(getip::get_ip))
         // 稳定测试页（P5 之前给个占位，别让链接 404）
-        .route("/stability", get(index))
-        .route("/stability.html", get(index))
         // WS 上传与结算
         .route("/backend/ws-upload", get(ws_upload))
         .route("/backend/ws-result", get(upload::ws_result))
@@ -303,7 +305,7 @@ async fn fallback(
         return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed").into_response();
     }
     if PathBuf::from(&path).extension().is_none() {
-        return assets::index(app.cfg.web_dir.clone()).await;
+        return axum::response::Redirect::to("/app/index.html").into_response();
     }
     match app.cfg.web_dir.clone() {
         Some(root) => assets::serve(root, path).await,
