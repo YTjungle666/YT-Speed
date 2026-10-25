@@ -1,5 +1,5 @@
 [Unit]
-Description=speedtestd（LibreSpeed Rust 服务端）
+Description=YT-Speed（Rust 测速服务端）
 Documentation=https://github.com/YTjungle666/YT-Speed
 After=network-online.target
 Wants=network-online.target
@@ -9,7 +9,7 @@ Type=simple
 User=speedtest
 Group=speedtest
 WorkingDirectory=/srv/speedtest
-ExecStart=/usr/local/bin/speedtestd --listen 0.0.0.0:8080 --web-dir /srv/speedtest/web
+ExecStart=/usr/local/bin/yt-speed --listen 0.0.0.0:8080 --web-dir /srv/yt-speed/web
 # 可调项也可以走环境变量（与命令行同义）；改完 systemctl daemon-reload
 Environment=RUST_LOG=info
 # Environment=SPEEDTEST_MAX_DOWNLOAD_MBPS=500

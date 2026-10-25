@@ -1,0 +1,27 @@
+#!/sbin/openrc-run
+# YT-Speed 服务端（Alpine / OpenRC）
+#
+# 监听 80 需要 root；进程本身只读磁盘（web 目录）、不落盘结果。
+# 日志走 /var/log/yt-speed.log，靠 /etc/logrotate.d/yt-speed 限大小，
+# 不用 journald（Alpine 容器里没有）。
+
+name="yt-speed"
+description="YT-Speed 测速服务端"
+
+command="/usr/local/bin/yt-speed"
+command_args="--listen 0.0.0.0:80 --web-dir /srv/yt-speed/web"
+command_user="root"
+command_background="yes"
+pidfile="/run/yt-speed.pid"
+
+# 崩了自己起来；respawn_max=0 表示不限次数（这是测速服务，挂了就等于网页不可用）
+supervisor="supervise-daemon"
+respawn_delay=2
+respawn_max=0
+output_log="/var/log/yt-speed.log"
+error_log="/var/log/yt-speed.log"
+
+depend() {
+	need net
+	after firewall
+}

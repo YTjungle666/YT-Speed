@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "LibreSpeed 服务端：garbage/empty/getIP、WebSocket 上传结算、限速"
+description = "YT-Speed 服务端：garbage/empty/getIP、WebSocket 上传结算、限速"
 
 [[bin]]
-name = "speedtestd"
+name = "yt-speed"
 path = "src/main.rs"
 
 [dependencies]

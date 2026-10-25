@@ -1,7 +1,8 @@
-# librespeed-rs
+# YT-Speed
 
-LibreSpeed 的 Rust 全栈重写（家庭内网自用）。设计与验收标准见
-`~/Plan/speedtest-rs/PLAN.md`（本仓不放计划）。
+家庭内网测速服务（Leptos/WASM 前端 + Rust 测量引擎 + 原生命令行），
+设计取向上参考 LibreSpeed 但为全栈 Rust 重写。设计与验收标准见
+`~/Plan/yt-speed/PLAN.md`（本仓不放计划；部署见 `deploy/`）。
 
 ## 资源上限（硬约束）
 

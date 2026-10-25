@@ -394,7 +394,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         web_dir = ?cfg.web_dir,
         max_download_mbps = cfg.max_download_mbps,
         max_upload_mbps = cfg.max_upload_mbps,
-        "speedtestd 已启动"
+        "yt-speed 已启动"
     );
 
     axum::serve(
