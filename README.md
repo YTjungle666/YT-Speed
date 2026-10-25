@@ -3,8 +3,7 @@
 [![ci](https://github.com/YTjungle666/YT-Speed/actions/workflows/ci.yml/badge.svg)](https://github.com/YTjungle666/YT-Speed/actions/workflows/ci.yml)
 
 家庭内网测速服务（Leptos/WASM 前端 + Rust 测量引擎 + 原生命令行），
-设计取向上参考 LibreSpeed 但为全栈 Rust 重写。设计与验收标准见
-`~/Plan/yt-speed/PLAN.md`（本仓不放计划；部署见 `deploy/`）。
+设计取向上参考 LibreSpeed 但为全栈 Rust 重写。
 
 ## 资源上限（硬约束）
 
