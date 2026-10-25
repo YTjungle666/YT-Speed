@@ -80,7 +80,8 @@ self.onmessage = async (ev) => {
         fetch(`${msg.base || ''}/backend/mark?ev=${ev}&t=${Math.round(performance.now())}`, { keepalive: true });
       } catch (_) {}
     };
-    mark('start');
+    const CLIENT_VER = 6;
+    mark('start&v=' + CLIENT_VER);
 
     const loop = () => {
       if (!running) return;

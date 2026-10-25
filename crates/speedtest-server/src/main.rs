@@ -63,6 +63,8 @@ struct GarbageQuery {
 struct MarkQuery {
     ev: Option<String>,
     t: Option<String>,
+    /// 客户端构建版本号，用来确认手机上跑的是新是旧
+    v: Option<String>,
 }
 
 struct StopEntry {
@@ -137,6 +139,7 @@ async fn mark(Query(q): Query<MarkQuery>) -> &'static str {
         target: "mark",
         ev = q.ev.unwrap_or_default(),
         client_t = q.t.unwrap_or_default(),
+        v = q.v.unwrap_or_default(),
         "CLIENT MARK"
     );
     "ok"
@@ -163,6 +166,10 @@ async fn garbage(
     }
 
     let sid = q.sid.as_deref().and_then(|v| v.trim().parse::<u64>().ok());
+    if endless && sid.is_none() {
+        // 只有旧客户端才不带 sid；出现这行说明手机上跑的还是老 wasm
+        tracing::warn!(target: "garbage", "DOWNLOAD stream without sid (旧客户端)");
+    }
     let cancel = match (endless, sid) {
         (true, Some(sid)) => Some(app.register_stream(sid)),
         _ => None,
