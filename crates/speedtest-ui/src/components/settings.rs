@@ -86,7 +86,7 @@ pub fn Settings(session: EngineSession) -> impl IntoView {
                     prop:value=move || plan.get().streams.to_string()
                     on:change=set_streams
                 />
-                <small>"默认 10。浏览器接收侧决定最优值，换机器要重新扫描（见 sweep.html）。"</small>
+                <small>"默认 10。最优值由浏览器接收侧决定，换机器/换网卡要自己试几组。"</small>
             </label>
             <label>
                 <span>"下载时长（秒）"</span>

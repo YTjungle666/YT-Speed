@@ -44,21 +44,34 @@ core 的时间一律由调用方传入（`apply(ev, now_ms)`），所以测试�
 
 ## Web UI
 
-构建并部署 Leptos 页面到 `web/app/`：
+界面就挂在站点根（`http://host/`），构建走两套工具链：
 
 ```sh
-sudo apt install binaryen   # 提供 wasm-opt，仅构建时需要
-./scripts/build-ui.sh
+sudo apt install binaryen          # 提供 wasm-opt，trunk 需要
+cargo install wasm-bindgen-cli      # 版本要和 Cargo.lock 里的 wasm-bindgen 一致
+./scripts/build-engine.sh           # 测量引擎 → web/pkg/
+./scripts/build-ui.sh               # Leptos 页面 → web/ 根（index.html + 哈希资源）
 ```
 
-在仓库根目录启动静态服务后打开 `http://127.0.0.1:8092/app/`：
+本地预览：
 
 ```sh
 cd web
-python3 -m http.server 8092
+python3 -m http.server 8092   # 打开 http://127.0.0.1:8092/
 ```
 
-构建使用 `/app/` 作为 Trunk `public_url`。P4b 浏览器矩阵：
+Trunk 的 `public_url` 是 `/`，资源都是根路径；正式环境的 wasm MIME 由 `yt-speed` 自己发。
+
+## 开发与验证工具
+
+这两个是验收用的，不是产品路径：
+
+| 工具 | 用途 |
+|---|---|
+| `scripts/verify-server.sh [host:port]` | 逐端点核对头/体、上传三种形态、熵、限速 |
+| `cargo run --release --example wsclient -- ws://host/backend/ws-upload 10 [frame_kib]` | 上传压测：推指定 GB 的 1 MiB 帧，和服务端结算对照 |
+
+P4b 浏览器矩阵：
 
 | 浏览器 | 状态 |
 |---|---|
