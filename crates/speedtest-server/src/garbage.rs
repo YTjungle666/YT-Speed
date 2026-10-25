@@ -39,6 +39,27 @@ impl Payload {
     }
 }
 
+/// 观测用的落日志守卫：流被丢弃（客户端断开）时也会 Drop，能记下真实存活时长。
+struct StreamGuard {
+    started: std::time::Instant,
+    sent: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    reason: std::sync::Arc<std::sync::Mutex<&'static str>>,
+}
+
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        let ms = self.started.elapsed().as_millis();
+        let bytes = self.sent.load(std::sync::atomic::Ordering::Relaxed);
+        let reason = *self.reason.lock().unwrap();
+        let gbps = if ms > 0 {
+            bytes as f64 * 8.0 / (ms as f64 / 1000.0) / 1e9
+        } else {
+            0.0
+        };
+        tracing::info!(target: "garbage", bytes, ms, gbps, reason, "DOWNLOAD stream ended");
+    }
+}
+
 /// `ckSize` 参数解析：非法值给默认 4，超过 1024 截到 1024。
 pub fn parse_ck_size(raw: Option<&str>) -> u32 {
     let ck = raw
@@ -56,6 +77,8 @@ pub fn garbage_response(
     payload: &Payload,
     ck_size: u32,
     endless: bool,
+    max_secs: Option<u64>,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     limiter: std::sync::Arc<crate::pace::RateLimiter>,
 ) -> Response {
     // `stream=1`：不给 Content-Length，一直发到客户端断开为止。
@@ -69,22 +92,56 @@ pub fn garbage_response(
     };
     let block = payload.block().clone();
 
+    // 观测：endless 响应结束时（正常断开 / 命中上限 / 流被丢弃）都记一行，
+    // 用来判断「测速结束后还有流量」到底是客户端没关，还是服务端写超了。
+    let guard = if endless {
+        Some(StreamGuard {
+            started: std::time::Instant::now(),
+            sent: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            reason: std::sync::Arc::new(std::sync::Mutex::new("client-gone")),
+        })
+    } else {
+        None
+    };
+    let sent_counter = guard.as_ref().map(|g| g.sent.clone());
+    let reason_slot = guard.as_ref().map(|g| g.reason.clone());
+
     // `stream=1` 还要有时间上限：客户端被冻结（手机锁屏）时不会断开，
     // 只靠 32 GiB 字节上限要发 30 s 以上，服务端会一直往外写。
+    // 客户端可以报一个更短的 `maxsecs`（= 自己那个下载窗口 + 余量）：
+    // 手机被冻结时服务端最多也就写到那一刻，不会用满 30 s 的兜底。
+    let cap = max_secs
+        .map(|v| v.clamp(1, crate::limits::MAX_STREAM_SECS))
+        .unwrap_or(crate::limits::MAX_STREAM_SECS);
     let deadline = if endless {
-        Some(std::time::Instant::now() + std::time::Duration::from_secs(crate::limits::MAX_STREAM_SECS))
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(cap))
     } else {
         None
     };
 
-    let body_stream = stream::unfold((0usize, 0usize), move |(offset, sent)| {
+    let body_stream = stream::unfold((0usize, 0usize, guard), move |(offset, sent, guard)| {
         let block = block.clone();
         let limiter = limiter.clone();
+        // 闭包是 FnMut：这里必须 clone 进 async 块，不能把捕获变量 move 出去
+        let sent_counter = sent_counter.clone();
+        let reason_slot = reason_slot.clone();
+        let cancel = cancel.clone();
         async move {
             if sent >= total {
                 return None;
             }
+            if let Some(flag) = cancel.as_ref() {
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(slot) = reason_slot.as_ref() {
+                        *slot.lock().unwrap() = "client-stop";
+                    }
+                    return None;
+                }
+            }
             if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                if let Some(slot) = reason_slot.as_ref() {
+                    *slot.lock().unwrap() = "time-cap";
+                }
                 return None;
             }
             let take = SLICE_BYTES.min(total - sent);
@@ -96,9 +153,12 @@ pub fn garbage_response(
             if limiter.is_limited() {
                 limiter.reserve(take).await;
             }
+            if let Some(counter) = sent_counter.as_ref() {
+                counter.fetch_add(take as u64, std::sync::atomic::Ordering::Relaxed);
+            }
             Some((
                 Ok::<Bytes, Infallible>(chunk),
-                ((offset + take) % block.len(), sent + take),
+                ((offset + take) % block.len(), sent + take, guard),
             ))
         }
     });

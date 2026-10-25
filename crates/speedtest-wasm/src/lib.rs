@@ -87,7 +87,8 @@ pub fn start(base: String, plan_json: String, now_ms: f64) -> Result<(), JsValue
         return Err(JsValue::from_str("至少要有 ping/download/upload 之一"));
     }
 
-    let mut transport = WasmTransport::new(base);
+    let dl_budget_ms = input.dl_seconds.unwrap_or(settings.dl_max_secs) * 1000.0 + 1_500.0;
+    let mut transport = WasmTransport::new(base).with_dl_budget(dl_budget_ms);
     if input.xhr {
         transport = transport.force_xhr();
     }

@@ -34,6 +34,8 @@ impl axum::extract::FromRef<App> for Arc<Settlements> {
 
 #[derive(Clone)]
 struct App {
+    /// sid → 该会话所有下载流的取消标志。手机端 abort 无效时的唯一可靠刹车。
+    stops: Arc<std::sync::Mutex<std::collections::HashMap<u64, StopEntry>>>,
     cfg: Config,
     payload: Payload,
     settlements: Arc<Settlements>,
@@ -50,12 +52,129 @@ struct GarbageQuery {
     ck_size: Option<String>,
     /// `stream=1`：不给 Content-Length，一直发到客户端断开（省掉请求间空档）。
     stream: Option<String>,
+    /// 客户端自己的窗口上限（秒）。手机被冻结时服务端就写到这一刻为止。
+    maxsecs: Option<String>,
+    /// 会话 id：客户端阶段结束时用它一次性关掉本会话的所有流。
+    sid: Option<String>,
 }
 
-async fn garbage(State(app): State<App>, Query(q): Query<GarbageQuery>) -> Response {
+/// 客户端阶段打点：只打一行日志，用来对齐「客户端何时结束某阶段」与服务端流的结束时间。
+#[derive(serde::Deserialize)]
+struct MarkQuery {
+    ev: Option<String>,
+    t: Option<String>,
+}
+
+struct StopEntry {
+    at: std::time::Instant,
+    flags: Vec<Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl App {
+    /// 给一条流注册取消标志；顺带清过期条目、超上限丢最旧的（表必须有界）。
+    fn register_stream(&self, sid: u64) -> Arc<std::sync::atomic::AtomicBool> {
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut map = self.stops.lock().unwrap();
+        let ttl = std::time::Duration::from_secs(limits::STOP_SESSION_TTL_SECS);
+        map.retain(|_, e| e.at.elapsed() < ttl);
+        while map.len() >= limits::MAX_STOP_SESSIONS {
+            let oldest = map
+                .iter()
+                .min_by_key(|(_, e)| e.at)
+                .map(|(k, _)| *k);
+            match oldest {
+                Some(k) => {
+                    map.remove(&k);
+                }
+                None => break,
+            }
+        }
+        map.entry(sid)
+            .or_insert_with(|| StopEntry {
+                at: std::time::Instant::now(),
+                flags: Vec::new(),
+            })
+            .flags
+            .push(flag.clone());
+        flag
+    }
+
+    /// 客户端主动结束一个会话：把它的所有流置为取消。
+    fn stop_session(&self, sid: u64) -> usize {
+        let mut map = self.stops.lock().unwrap();
+        let n = match map.remove(&sid) {
+            Some(e) => {
+                for f in &e.flags {
+                    f.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                e.flags.len()
+            }
+            None => 0,
+        };
+        n
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct StopQuery {
+    sid: Option<String>,
+}
+
+async fn stop(State(app): State<App>, Query(q): Query<StopQuery>) -> String {
+    let sid = q.sid.as_deref().and_then(|v| v.trim().parse::<u64>().ok());
+    match sid {
+        Some(sid) => {
+            let n = app.stop_session(sid);
+            tracing::info!(target: "stop", sid, streams = n, "CLIENT STOP");
+            format!("{{\"stopped\":{n}}}")
+        }
+        None => "{\"error\":\"sid 无效\"}".to_string(),
+    }
+}
+
+async fn mark(Query(q): Query<MarkQuery>) -> &'static str {
+    tracing::info!(
+        target: "mark",
+        ev = q.ev.unwrap_or_default(),
+        client_t = q.t.unwrap_or_default(),
+        "CLIENT MARK"
+    );
+    "ok"
+}
+
+async fn garbage(
+    State(app): State<App>,
+    Query(q): Query<GarbageQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
     let ck = garbage::parse_ck_size(q.ck_size.as_deref());
     let endless = matches!(q.stream.as_deref(), Some("1") | Some("true"));
-    let mut resp = garbage::garbage_response(&app.payload, ck, endless, app.dl_limiter.clone());
+    let max_secs = q
+        .maxsecs
+        .as_deref()
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    // 手机端「abort 掐不断」到底是哪个浏览器，只有 UA 能回答（远程机器开不了 devtools）
+    if endless {
+        let ua = headers
+            .get(header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("-");
+        tracing::debug!(target: "garbage", ua, maxsecs = ?max_secs, "DOWNLOAD stream start");
+    }
+
+    let sid = q.sid.as_deref().and_then(|v| v.trim().parse::<u64>().ok());
+    let cancel = match (endless, sid) {
+        (true, Some(sid)) => Some(app.register_stream(sid)),
+        _ => None,
+    };
+    let mut resp = garbage::garbage_response(
+        &app.payload,
+        ck,
+        endless,
+        max_secs,
+        cancel,
+        app.dl_limiter.clone(),
+    );
     let h = resp.headers_mut();
     h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".parse().unwrap());
     h.insert(
@@ -149,6 +268,8 @@ fn router(app: App) -> Router {
         // WS 上传与结算
         .route("/backend/ws-upload", get(ws_upload))
         .route("/backend/ws-result", get(upload::ws_result))
+        .route("/backend/mark", get(mark))
+        .route("/backend/stop", get(stop))
         // 兜底：静态资产
         .route("/assets/{*path}", get(static_file))
         .route("/favicon.ico", get(static_file_with("favicon.ico")))
@@ -256,6 +377,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         settlements: Arc::new(Settlements::default()),
         dl_limiter: Arc::new(pace::RateLimiter::new(cfg.max_download_mbps)),
         ul_limiter: Arc::new(pace::RateLimiter::new(cfg.max_upload_mbps)),
+        stops: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         ws_slots: Arc::new(tokio::sync::Semaphore::new(limits::MAX_WS_CONNECTIONS)),
     };
 

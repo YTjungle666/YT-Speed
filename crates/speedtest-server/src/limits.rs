@@ -50,3 +50,10 @@ pub const STREAM_BUFFER_BYTES: usize = 128 * 1024;
 
 // 采样点上限（`MAX_SAMPLES = 2048`）属于 P3 的 WASM 引擎，
 // 放在 `speedtest-transport` 里，服务端用不到。
+
+/// 客户端 session 登记表上限。手机端 `AbortController.abort()` 对 in-flight 的
+/// 流式响应无效（实测 Android Edge：阶段结束后仍继续收 8 s），所以客户端阶段结束时
+/// 改发 `/backend/stop?sid=`，由服务端把这条 session 的流全部结束。
+/// 表本身要有界：超过就丢最旧的，条目 60 s 自动过期。
+pub const MAX_STOP_SESSIONS: usize = 256;
+pub const STOP_SESSION_TTL_SECS: u64 = 60;

@@ -72,6 +72,15 @@ self.onmessage = async (ev) => {
     let drainUntil = 0; // 结束后继续跑一小段，等上传结算到达
 
     let lastFrame = null;
+    let lastPhase = '';
+    // 阶段打点：把「客户端认为自己进入/离开某阶段」的时间发回服务端，
+    // 才能判断残留流量是客户端没收手，还是服务端写超了。
+    const mark = (ev) => {
+      try {
+        fetch(`${msg.base || ''}/backend/mark?ev=${ev}&t=${Math.round(performance.now())}`, { keepalive: true });
+      } catch (_) {}
+    };
+    mark('start');
 
     const loop = () => {
       if (!running) return;
@@ -92,6 +101,10 @@ self.onmessage = async (ev) => {
       const raw = tick(performance.now());
       if (raw !== 'null') {
         const frame = JSON.parse(raw);
+        if (frame.phase !== lastPhase) {
+          lastPhase = frame.phase;
+          mark(frame.phase);
+        }
         const finished = frame.phase === 'Done' || frame.phase === 'Aborted';
         if (finished) {
           // 关键：上传结算是“关连接→取 token”之后才回来的，

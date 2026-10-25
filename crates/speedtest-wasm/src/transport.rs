@@ -101,6 +101,11 @@ pub struct WasmTransport {
     ws_failed: Rc<Cell<bool>>,
     /// 降级时要知道开几路、错开多少。
     pending_streams: (u32, f64),
+    /// 下载阶段预算（毫秒）：用来给服务端的 `maxsecs` 报上限。
+    dl_budget_ms: f64,
+    /// 本次测试的会话 id：阶段结束时用它让服务端把流关掉。
+    /// 手机端 `abort()` 掐不断 in-flight 的流式响应，这是唯一可靠的刹车。
+    sid: u64,
 }
 
 impl WasmTransport {
@@ -116,6 +121,8 @@ impl WasmTransport {
             mode: Rc::new(Cell::new(UploadMode::Ws)),
             ws_failed: Rc::new(Cell::new(false)),
             pending_streams: (XHR_STREAMS, 300.0),
+            dl_budget_ms: 15_000.0,
+            sid: (js_sys::Date::now() as u64) & 0xffff_ffff,
         }
     }
 
@@ -131,7 +138,15 @@ impl WasmTransport {
             // stream=1：服务端不发完就断开，一条请求跑满整个窗口。
             // 用 ckSize=1024 时 1 GiB 在 9 Gbit/s 下约 1 s 就发完，6 条流会同时重新请求，
             // 那个同步空档正是单轮下载忽高忽低（4.3~9.6 Gbit/s）的来源之一。
-            let url = format!("{}/backend/garbage?ckSize=1024&stream=1", self.base);
+            // maxsecs：告诉服务端这条流最多写多久（窗口 + 起跑错开 + 2 s 余量）。
+            // 手机锁屏时客户端不会断开，服务端到点自己收尾，残留流量有硬上限。
+            // 只要比阶段窗口略长：`abort()` 在部分浏览器上不能立刻掐断 in-flight 响应，
+            // 服务端这一刀是最后防线，多给 1 s 余量就够（实测手机端会晚 8 s 才停）。
+            let cap_secs = (self.dl_budget_ms / 1000.0).round() as u64 + 1;
+            let url = format!(
+                "{}/backend/garbage?ckSize=1024&stream=1&maxsecs={cap_secs}&sid={}",
+                self.base, self.sid
+            );
             let meters = self.meters.clone();
             spawn_local(async move {
                 if delay > 0 {
@@ -185,6 +200,7 @@ impl WasmTransport {
                             Ok(v) => v,
                             Err(err) => {
                                 if signal.aborted() {
+                                    let _ = reader.cancel();
                                     return;
                                 }
                                 retries += 1;
@@ -382,11 +398,29 @@ impl WasmTransport {
 }
 
 impl WasmTransport {
+    /// 由 `start()` 传入下载窗口，用来在 URL 上给服务端报 `maxsecs`。
+    pub fn with_dl_budget(mut self, ms: f64) -> Self {
+        self.dl_budget_ms = ms.max(1000.0);
+        self
+    }
+
     /// 强制走 XHR（降级模式，也用于验收对照：同一份代码两条通道对比）。
     pub fn force_xhr(self) -> Self {
         self.mode.set(UploadMode::Xhr);
         self
     }
+}
+
+/// Worker / window 里都能用的一次性 GET（等价于 keepalive beacon）。
+fn send_beacon(url: &str) -> Result<(), wasm_bindgen::JsValue> {
+    use wasm_bindgen::JsCast;
+    let global = js_sys::global();
+    let fetch = js_sys::Reflect::get(&global, &wasm_bindgen::JsValue::from_str("fetch"))?;
+    let fetch: &js_sys::Function = fetch
+        .dyn_ref()
+        .ok_or_else(|| wasm_bindgen::JsValue::from_str("fetch 不可用"))?;
+    fetch.call1(&global, &wasm_bindgen::JsValue::from_str(url))?;
+    Ok(())
 }
 
 impl Transport for WasmTransport {
@@ -417,6 +451,10 @@ impl Transport for WasmTransport {
         for c in self.controllers.drain(..) {
             c.abort();
         }
+        // `abort()` 在 Android Edge 上对 in-flight 流式响应无效（实测阶段结束后
+        // 还在收 8 s），所以让服务端按 sid 把这些流结束掉。
+        // 这段代码跑在 Worker 里，没有 `window`；直接借全局的 fetch
+        let _ = send_beacon(&format!("{}/backend/stop?sid={}", self.base, self.sid));
         if let Some(ws) = self.ws.take() {
             let _ = ws.close();
             // 关闭后去取服务端结算：这是上传的权威数字

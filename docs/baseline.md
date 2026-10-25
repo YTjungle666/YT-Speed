@@ -310,6 +310,40 @@ P0 的 TCP_INFO 已经指到 `rwnd_limited≈45%`、`sndbuf_limited=0`、重传 
 
 浏览器矩阵：Chromium 156 通过；Firefox / WebKit 本机没装，README 标为「未验证」。
 
+## 手机端测速后残留流量（2026-10-25）
+
+现象：手机（Android Edge 155，经 VPN 访问）测速结束后仍有约 400 Mbit/s 持续外发。
+
+排查用的三处埋点（都保留在代码里，各自有界）：
+
+| 埋点 | 内容 | 用途 |
+|---|---|---|
+| `DOWNLOAD stream ended` | 每条流的字节数、存活毫秒、结束原因 | 区分 `client-gone` / `client-stop` / `time-cap` |
+| `DOWNLOAD stream start`（debug） | UA + maxsecs | 确认是哪台浏览器 |
+| `/backend/mark?ev=` | 客户端阶段切换时间 | 把「客户端认为的阶段」和流的真实结束时间对齐 |
+
+实测（一次完整测试，客户端打点 vs 服务端）：
+
+```
+12:15:16.15  Download 开始，6 条流起跑
+12:15:21.49  Upload 开始      ← 下载阶段到此结束（5.3 s，time_auto 提前收）
+12:15:27.56  Done
+12:15:29.2~29.9  6 条下载流才结束，reason="time-cap"，各活 13.0~13.4 s
+```
+
+结论：**`AbortController.abort()` 在 Android Edge 上对 in-flight 的流式响应不生效**。
+阶段结束 8 s 后那些 `fetch` 仍在收数据，只有服务端的上限把它们掐断。
+本地 Chromium 桌面上同样的代码是同一瞬间全部 `client-gone`，所以这是浏览器差异。
+
+修法（不依赖浏览器行为）：客户端阶段结束时发 `/backend/stop?sid=`，
+服务端按 session 把所有流置为取消，流立即结束（实测 `reason="client-stop"`，
+从发出到流结束 0.5 ms）。配套：
+
+- `maxsecs` 由客户端按自己的窗口上报（原来固定 30 s，等于给 10 s 的请求多送 20 s）
+- 页面 `visibilitychange` / `pagehide` → worker 收到即 abort 并通知服务端
+- worker 看门狗：绝对截止时间 = 下载 + 上传时长 + 30 s，定时器被节流也会命中
+- session 表有界：256 条、60 s 过期、超限丢最旧
+
 ## 复现方式
 
 ```sh
