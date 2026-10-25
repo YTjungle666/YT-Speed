@@ -49,7 +49,7 @@ struct PlanInput {
     xhr: bool,
 }
 
-/// 开始一次测速。`base` 是服务端 origin（如 `http://192.0.2.10:8080`）。
+/// 开始一次测速。`base` 是服务端 origin（如 `http://127.0.0.1:8080`）。
 ///
 /// `now_ms` 必须和 `tick()` 用的时钟是同一个（浏览器里都是 `performance.now()`）。
 /// 这里踩过坑：`start` 内部用 `Date::now()`（纪元毫秒）、`tick` 用 `performance.now()`
